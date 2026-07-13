@@ -1,0 +1,9 @@
+Kyuubi Spark Local File ACL Plugin
+Copyright 2026 Automattic, Inc.
+
+This product includes software developed at
+Automattic, Inc. (https://automattic.com/).
+
+This product bundles SnakeYAML (org.yaml:snakeyaml), licensed under the
+Apache License, Version 2.0, relocated under the
+com.automattic.kyuubi.spark.localfileacl.shaded package.
