@@ -13,7 +13,9 @@ public record PluginSettings(
     String extraKeysSpec,
     String excludedKeysSpec,
     Path uploadRoot,
-    String expectedOwner) {
+    String expectedOwner,
+    boolean wildcardsEnabled,
+    boolean failOnMissingFiles) {
 
   public static final String RULES_FILE_PROP = "kyuubi.local.file.acl.rules.file";
   public static final String RELOAD_INTERVAL_PROP = "kyuubi.local.file.acl.reload.interval";
@@ -21,6 +23,9 @@ public record PluginSettings(
   public static final String EXCLUDED_KEYS_PROP = "kyuubi.local.file.acl.excluded.keys";
   public static final String UPLOAD_ROOT_PROP = "kyuubi.local.file.acl.upload.root";
   public static final String EXPECTED_OWNER_PROP = "kyuubi.local.file.acl.expected.owner";
+  public static final String WILDCARDS_ENABLED_PROP = "kyuubi.local.file.acl.wildcards.enabled";
+  public static final String FAIL_ON_MISSING_FILES_PROP =
+      "kyuubi.local.file.acl.fail.on.missing.files";
 
   public static final String DEFAULT_RULES_FILE_NAME = "kyuubi-local-file-acl.yaml";
 
@@ -41,7 +46,29 @@ public record PluginSettings(
         System.getProperty(EXTRA_KEYS_PROP),
         System.getProperty(EXCLUDED_KEYS_PROP),
         uploadRoot,
-        expectedOwner == null || expectedOwner.isBlank() ? null : expectedOwner.strip());
+        expectedOwner == null || expectedOwner.isBlank() ? null : expectedOwner.strip(),
+        booleanProperty(WILDCARDS_ENABLED_PROP, false),
+        booleanProperty(FAIL_ON_MISSING_FILES_PROP, true));
+  }
+
+  /**
+   * Only {@code true} and {@code false} are accepted. {@code Boolean.parseBoolean} would map a typo
+   * to {@code false}, silently turning off the fail-closed treatment of missing ACL files.
+   */
+  private static boolean booleanProperty(String property, boolean defaultValue) {
+    String configured = System.getProperty(property);
+    if (configured == null) {
+      return defaultValue;
+    }
+    String value = configured.strip();
+    if ("true".equalsIgnoreCase(value)) {
+      return true;
+    }
+    if ("false".equalsIgnoreCase(value)) {
+      return false;
+    }
+    throw new IllegalArgumentException(
+        "Property " + property + " must be 'true' or 'false' but was '" + configured + "'");
   }
 
   private static Path resolveRulesFile() {

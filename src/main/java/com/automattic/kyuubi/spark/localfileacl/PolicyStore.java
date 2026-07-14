@@ -1,5 +1,6 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -75,18 +76,22 @@ public final class PolicyStore {
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
-      if (state instanceof AclState.Valid valid && digest.equals(valid.digest())) {
+      if (state instanceof AclState.Valid valid
+          && digest.equals(valid.digest())
+          && !anyUnresolvedPathExists(valid.policy())) {
         LOG.debug("ACL digest unchanged ({}); skipping reparse", digest);
         return;
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
       LOG.info(
-          "Activated ACL policy from {}: {} users, {} groups, {} rules, digest {}, {} ms",
+          "Activated ACL policy from {}: {} users, {} groups, {} rules, {} unresolved, "
+              + "digest {}, {} ms",
           aclFile,
           policy.userRules().size(),
           policy.groupRules().size(),
           policy.ruleCount(),
+          policy.unresolvedPaths().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
     } catch (Exception e) {
@@ -97,6 +102,15 @@ public final class PolicyStore {
           aclFile,
           e);
     }
+  }
+
+  /**
+   * An exact rule omitted for a missing file must activate once that file appears, even though the
+   * ACL content — and therefore its digest — never changed. Only a full reparse canonicalizes the
+   * path and re-runs the policy checks, so the digest fast path must yield here.
+   */
+  private static boolean anyUnresolvedPathExists(AclPolicy policy) {
+    return policy.unresolvedPaths().stream().anyMatch(Files::exists);
   }
 
   private static String sha256(byte[] content) throws Exception {

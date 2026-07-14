@@ -75,6 +75,8 @@ class KyuubiServerITSpec {
     System.setProperty(PluginSettings.RULES_FILE_PROP, aclFile.toString());
     System.setProperty(PluginSettings.UPLOAD_ROOT_PROP, uploadRoot.toString());
     System.setProperty(PluginSettings.RELOAD_INTERVAL_PROP, "PT60S");
+    // The fixture ACL is glob-based, and wildcards are off by default.
+    System.setProperty(PluginSettings.WILDCARDS_ENABLED_PROP, "true");
 
     KyuubiConf conf = new KyuubiConf(false);
     conf.set("kyuubi.frontend.protocols", "THRIFT_BINARY,REST");
@@ -120,6 +122,7 @@ class KyuubiServerITSpec {
     System.clearProperty(PluginSettings.RULES_FILE_PROP);
     System.clearProperty(PluginSettings.UPLOAD_ROOT_PROP);
     System.clearProperty(PluginSettings.RELOAD_INTERVAL_PROP);
+    System.clearProperty(PluginSettings.WILDCARDS_ENABLED_PROP);
   }
 
   @Test

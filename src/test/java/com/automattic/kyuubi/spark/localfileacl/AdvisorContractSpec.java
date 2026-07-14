@@ -44,6 +44,8 @@ class AdvisorContractSpec {
     System.setProperty(PluginSettings.RULES_FILE_PROP, aclFile.toString());
     System.setProperty(PluginSettings.UPLOAD_ROOT_PROP, uploadRoot.toString());
     System.setProperty(PluginSettings.RELOAD_INTERVAL_PROP, "PT60S");
+    // This fixture ACL is glob-based, and wildcards are off by default.
+    System.setProperty(PluginSettings.WILDCARDS_ENABLED_PROP, "true");
   }
 
   @AfterEach
@@ -53,6 +55,7 @@ class AdvisorContractSpec {
     System.clearProperty(PluginSettings.RELOAD_INTERVAL_PROP);
     System.clearProperty(PluginSettings.EXTRA_KEYS_PROP);
     System.clearProperty(PluginSettings.EXCLUDED_KEYS_PROP);
+    System.clearProperty(PluginSettings.WILDCARDS_ENABLED_PROP);
   }
 
   @Test
@@ -122,6 +125,15 @@ class AdvisorContractSpec {
     // Denied specifically by cross-batch upload isolation, not by a generic no-rule miss —
     // proving the canonicalized upload root still recognized the resource as an upload.
     assertTrue(e.getMessage().contains("upload root"), e.getMessage());
+  }
+
+  @Test
+  void startupFailsOnAWildcardAclWhenWildcardsAreDisabled() {
+    // The shipped default: a glob-bearing ACL cannot load at all, rather than being silently
+    // reinterpreted or partially applied.
+    System.clearProperty(PluginSettings.WILDCARDS_ENABLED_PROP);
+    RuntimeException e = assertThrows(RuntimeException.class, SparkLocalFileAclAdvisor::new);
+    assertTrue(e.getMessage().contains(PluginSettings.WILDCARDS_ENABLED_PROP), e.getMessage());
   }
 
   @Test

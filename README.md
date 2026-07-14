@@ -48,8 +48,13 @@ below. The effective keys and cardinalities are logged at `INFO` during initiali
    ```bash
    export KYUUBI_JAVA_OPTS="$KYUUBI_JAVA_OPTS \
      -Dkyuubi.local.file.acl.rules.file=/etc/kyuubi/kyuubi-local-file-acl.yaml \
-     -Dkyuubi.local.file.acl.reload.interval=PT60S"
+     -Dkyuubi.local.file.acl.reload.interval=PT60S \
+     -Dkyuubi.local.file.acl.wildcards.enabled=true"
    ```
+
+   The example ACL below uses glob patterns, which require
+   `kyuubi.local.file.acl.wildcards.enabled=true`. Drop that flag if your policy names exact
+   files only.
 
 | System property | Default | Meaning |
 | --- | --- | --- |
@@ -59,11 +64,22 @@ below. The effective keys and cardinalities are logged at `INFO` during initiali
 | `kyuubi.local.file.acl.excluded.keys` | (none) | Keys removed from the effective set; exclusions win over defaults and extras |
 | `kyuubi.local.file.acl.upload.root` | `$KYUUBI_WORK_DIR_ROOT/upload`, else `${user.dir}/upload` | Must match Kyuubi's upload work dir; created if absent and canonicalized at startup (startup fails otherwise) |
 | `kyuubi.local.file.acl.expected.owner` | (none) | When set, every reload requires the ACL file — and every ancestor directory of it — to be owned by this OS user (or root, for system directories) |
+| `kyuubi.local.file.acl.wildcards.enabled` | `false` | Whether ACL patterns may use glob matching. While disabled, any pattern containing `*`, `?`, `[`, `]`, `{`, or `}` makes the policy invalid |
+| `kyuubi.local.file.acl.fail.on.missing.files` | `true` | Whether an exact rule naming a nonexistent file makes the policy invalid. When `false`, the rule is logged at `ERROR` and omitted |
+
+The two boolean properties accept only `true` or `false` (case-insensitively); a blank or
+unrecognized value fails plugin initialization rather than silently selecting a
+security-sensitive mode.
 
 Escape-hatch entries are normalized with the same key rules; malformed entries, unknown
 cardinalities, conflicting duplicates, and exclusions that match nothing fail plugin
 initialization (and therefore server session handling) at startup. These settings are
 startup-only — they are not part of YAML hot reload.
+
+**Upgrading from 1.0.x:** wildcard matching used to be unconditional and is now off by default. A
+deployment whose ACL uses glob patterns must set
+`-Dkyuubi.local.file.acl.wildcards.enabled=true` before upgrading, or plugin initialization fails
+and the server rejects every session carrying a policed key.
 
 ## ACL file
 
@@ -86,10 +102,18 @@ groups:
 - Effective permissions are the union of the username's rules and the rules of every Hadoop group
   containing the user (resolved via `UserGroupInformation`, i.e. Kyuubi's `HadoopGroupProvider`
   behavior). There are no deny rules; no match means denied.
-- Patterns use Java NIO `glob:` syntax (`*`, `**`, `?`, `[abc]`, `{one,two}`); a pattern without
-  metacharacters is an exact-file rule that must resolve via `toRealPath()` at load time — an
-  exact rule naming a nonexistent file invalidates the policy rather than silently authorizing a
-  file created later.
+- Patterns use Java NIO `glob:` syntax (`*`, `**`, `?`, `[abc]`, `{one,two}`) **only when
+  `kyuubi.local.file.acl.wildcards.enabled=true`**. While wildcards are disabled (the default), a
+  pattern containing a glob metacharacter is rejected with an error naming the property — it is
+  never reinterpreted as a literal filename — and the policy is invalid. A glob that currently
+  matches no file stays valid: it legitimately describes files created later.
+- A pattern without metacharacters is an exact-file rule that must resolve via `toRealPath()` at
+  load time. By default a nonexistent file invalidates the policy rather than silently authorizing
+  a file created later. With `kyuubi.local.file.acl.fail.on.missing.files=false` the rule is
+  instead logged at `ERROR` and omitted: it authorizes nothing, its siblings stay in effect, and
+  it activates on a later reload once the file exists (see below). Only a genuinely absent file is
+  tolerated — permission errors, symlink loops, and other I/O failures still invalidate the
+  policy.
 - Patterns must be absolute local paths, without URI schemes or `..` segments, and must not target
   the Kyuubi upload root. Duplicate YAML keys (principals, `allow` fields) are rejected.
 - Submitted values must identify concrete files: globs, relative paths, `file` URIs with an
@@ -123,6 +147,14 @@ The policy is an immutable snapshot behind an atomic reference. On a non-blockin
 one request thread re-reads the file, skips reparsing when the SHA-256 digest is unchanged, and
 atomically publishes the new snapshot (modification time is deliberately not trusted).
 
+The digest fast path has one exception: when the active policy carries exact rules that were
+omitted for missing files, each check also tests whether one of those paths now exists, and forces
+a full reparse if so. An omitted rule therefore activates within one reload interval of its file
+appearing, without an ACL edit or a restart — and it activates only through that reparse, which
+canonicalizes the path and re-runs every policy check. It is never matched lexically. While the
+file stays missing, the reparse is skipped as usual, so nothing churns and the `ERROR` is not
+re-logged every interval.
+
 The plugin fails closed for local resources when: the initial ACL cannot be loaded (plugin
 initialization fails), a reload produces an invalid state (missing/unreadable/malformed file,
 invalid pattern, loose permissions), Hadoop group resolution fails, a local URI is malformed or
@@ -132,8 +164,53 @@ policed keys, or with remote-only resources, are unaffected. Current-batch uploa
 remain in effect while the state is invalid: they authorize only files the batch itself staged,
 canonically confined to its own upload directory, and never consult ACL rules — so an ACL outage
 does not fail batches that reference nothing but their own uploads. Denials throw
-`org.apache.kyuubi.KyuubiException` naming the user, configuration key, and path; grants and
-denials are audit-logged through SLF4J into Kyuubi's normal logging.
+`org.apache.kyuubi.KyuubiException` naming the user, configuration key, and path, and are recorded
+in the audit log below.
+
+## Audit log
+
+Every authorization decision the plugin makes is emitted as one single-line record on a dedicated
+SLF4J category:
+
+```text
+com.automattic.kyuubi.spark.localfileacl.audit
+```
+
+Grants log at `INFO`, denials at `WARN`, in a fixed logfmt-style schema:
+
+```text
+event=local_file_acl decision=ALLOW user="alice" key="spark.files" resource="/opt/kyuubi/resources/alice/app.conf" reason="user-rule" principal_type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/*.conf"
+event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/etc/kyuubi/kyuubi.keytab" reason="no-matching-rule" principal_type="" principal="" pattern=""
+```
+
+- `reason` is one of `user-rule`, `group-rule`, `upload-exemption` (grants) or `no-matching-rule`,
+  `cross-batch-upload`, `invalid-acl-state`, `group-resolution-failed`, `invalid-resource`
+  (denials). Fields that do not apply to a decision are present with an empty value, so the schema
+  is stable for downstream parsing.
+- Every value is escaped (quotes, backslashes, CR/LF, tabs, and other control characters), so a
+  crafted username or path cannot forge a record or split a decision across lines.
+- Exactly one record per **evaluated** local resource. Validation is fail-fast: once a resource is
+  denied the submission is rejected, and the resources after it are never evaluated and never get
+  a fabricated record. Remote URIs and unpoliced keys produce no records — the plugin makes no
+  decision about them.
+
+The plugin bundles no logging configuration. Route the category to its own file through Kyuubi's
+Log4j2 configuration (`$KYUUBI_CONF_DIR/log4j2.xml`), with additivity off so the records do not
+also land in the server log:
+
+```xml
+<RollingFile name="audit" fileName="${sys:kyuubi.log.path}/kyuubi-local-file-acl-audit.log"
+             filePattern="${sys:kyuubi.log.path}/kyuubi-local-file-acl-audit-%d{yyyy-MM-dd}.log.gz">
+  <PatternLayout pattern="%d{ISO8601} %-5level %msg%n"/>
+  <Policies><TimeBasedTriggeringPolicy/></Policies>
+</RollingFile>
+
+<Logger name="com.automattic.kyuubi.spark.localfileacl.audit" level="info" additivity="false">
+  <AppenderRef ref="audit"/>
+</Logger>
+```
+
+Retention, file permissions, shipping, and durability of that file are operator responsibilities.
 
 ## Batch upload exemption
 

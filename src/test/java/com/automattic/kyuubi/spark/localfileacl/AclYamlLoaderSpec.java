@@ -14,6 +14,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,11 +31,23 @@ class AclYamlLoaderSpec {
   void setUp() throws Exception {
     root = TestSupport.real(tempDir);
     uploadRoot = Files.createDirectories(root.resolve("upload"));
-    loader = new AclYamlLoader(uploadRoot, null);
+    loader = new AclYamlLoader(TestSupport.options(uploadRoot));
   }
 
   private AclPolicy parse(String yaml) {
     return loader.parse(yaml.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static AclPolicy parseWith(AclYamlLoader loader, String yaml) {
+    return loader.parse(yaml.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static String allowing(String... patterns) {
+    StringBuilder yaml = new StringBuilder("version: 1\nusers:\n  u:\n    allow:\n");
+    for (String pattern : patterns) {
+      yaml.append("      - '").append(pattern).append("'\n");
+    }
+    return yaml.toString();
   }
 
   @Test
@@ -242,10 +255,14 @@ class AclYamlLoaderSpec {
     Path acl = root.resolve("owned.yaml");
     TestSupport.writeAcl(acl, "version: 1\n");
 
-    AclYamlLoader wrongOwner = new AclYamlLoader(uploadRoot, "definitely-not-this-user");
+    AclYamlLoader wrongOwner =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, "definitely-not-this-user", true, true));
     assertThrows(Exception.class, () -> wrongOwner.readVerified(acl));
 
-    AclYamlLoader rightOwner = new AclYamlLoader(uploadRoot, Files.getOwner(acl).getName());
+    AclYamlLoader rightOwner =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, Files.getOwner(acl).getName(), true, true));
     assertEquals("version: 1\n", new String(rightOwner.readVerified(acl)));
 
     Path huge = root.resolve("huge.yaml");
@@ -261,8 +278,7 @@ class AclYamlLoaderSpec {
     // attempt observes a size/mtime mismatch and the read is never accepted.
     AclYamlLoader racingLoader =
         new AclYamlLoader(
-            uploadRoot,
-            null,
+            TestSupport.options(uploadRoot),
             () -> {
               try {
                 Files.writeString(acl, "# grew\n", StandardOpenOption.APPEND);
@@ -281,8 +297,7 @@ class AclYamlLoaderSpec {
     byte[] filler = new byte[(int) AclYamlLoader.MAX_ACL_BYTES + 1024];
     AclYamlLoader racingLoader =
         new AclYamlLoader(
-            uploadRoot,
-            null,
+            TestSupport.options(uploadRoot),
             () -> {
               try {
                 Files.write(acl, filler, StandardOpenOption.APPEND);
@@ -319,12 +334,15 @@ class AclYamlLoaderSpec {
     TestSupport.writeAcl(acl, "version: 1\n");
     // The whole chain (user temp dirs plus root-owned system ancestors) must satisfy
     // "expected owner or root" — this walks all the way to /.
-    AclYamlLoader ownedLoader = new AclYamlLoader(uploadRoot, Files.getOwner(acl).getName(), null);
+    AclYamlLoader ownedLoader =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, Files.getOwner(acl).getName(), true, true), null);
     assertEquals("version: 1\n", new String(ownedLoader.readVerified(acl)));
     // A chain containing directories owned by anyone else is rejected (here every user-owned
     // temp ancestor violates the expectation).
     AclYamlLoader distrustingLoader =
-        new AclYamlLoader(uploadRoot, "definitely-not-this-user", null);
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, "definitely-not-this-user", true, true), null);
     assertThrows(Exception.class, () -> distrustingLoader.readVerified(acl));
   }
 
@@ -338,7 +356,10 @@ class AclYamlLoaderSpec {
     // but this one 0755-style directory is controlled by someone else — a directory-entry swap
     // vector that must be rejected with the ancestor-specific error.
     AclYamlLoader foreignAncestorLoader =
-        new AclYamlLoader(uploadRoot, me, null, path -> path.equals(foreignDir) ? "intruder" : me);
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, me, true, true),
+            null,
+            path -> path.equals(foreignDir) ? "intruder" : me);
     IOException e = assertThrows(IOException.class, () -> foreignAncestorLoader.readVerified(acl));
     assertTrue(e.getMessage().contains("ancestor directory"), e.getMessage());
     assertTrue(e.getMessage().contains("intruder"), e.getMessage());
@@ -373,6 +394,72 @@ class AclYamlLoaderSpec {
             PosixFilePermission.OTHERS_WRITE,
             PosixFilePermission.OTHERS_EXECUTE));
     assertThrows(Exception.class, () -> loader.readVerified(acl));
+  }
+
+  @Test
+  void rejectsWildcardPatternsWhenWildcardsAreDisabled() throws Exception {
+    Path exact = Files.writeString(root.resolve("exact.conf"), "x");
+    AclYamlLoader strict =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, false, true));
+
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class, () -> parseWith(strict, allowing(root + "/*.conf")));
+    assertTrue(e.getMessage().contains(PluginSettings.WILDCARDS_ENABLED_PROP), e.getMessage());
+    // No glob construct slips through, and none is silently reinterpreted as a literal filename.
+    for (String pattern :
+        List.of("/d/**", "/d/f?.conf", "/d/[ab].cfg", "/d/{one,two}.pem", "/d/*")) {
+      assertThrows(
+          IllegalArgumentException.class, () -> parseWith(strict, allowing(root + pattern)));
+    }
+    // Exact rules are unaffected.
+    AclPolicy policy = parseWith(strict, allowing(exact.toString()));
+    assertTrue(policy.rulesForUser("u").get(0).matches(exact));
+  }
+
+  @Test
+  void omitsMissingExactRulesWhenFailOnMissingFilesIsDisabled() throws Exception {
+    Path present = Files.writeString(root.resolve("present.conf"), "x");
+    Path missing = root.resolve("missing.conf");
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+
+    AclPolicy policy = parseWith(lenient, allowing(present.toString(), missing.toString()));
+
+    // The missing rule authorizes nothing, its valid sibling survives, and the path is carried
+    // in the snapshot so PolicyStore can reparse once the file appears.
+    List<CompiledRule> rules = policy.rulesForUser("u");
+    assertEquals(1, rules.size());
+    assertTrue(rules.get(0).matches(present));
+    assertEquals(Set.of(missing), policy.unresolvedPaths());
+  }
+
+  @Test
+  void invalidatesOnIoFailuresOtherThanAMissingFileEvenWhenLenient() throws Exception {
+    // A symlink loop resolves to a FileSystemException, not NoSuchFileException: it signals a
+    // broken policy rather than a file that has yet to be created, so it must still invalidate.
+    Path loop = root.resolve("loop-a.conf");
+    Path other = root.resolve("loop-b.conf");
+    Files.createSymbolicLink(loop, other);
+    Files.createSymbolicLink(other, loop);
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> parseWith(lenient, allowing(loop.toString())));
+  }
+
+  @Test
+  void rejectsUploadRootPatternsInLenientModeToo() {
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+    // The upload-root check precedes canonicalization, so a nonexistent upload path is rejected
+    // rather than tolerated as "missing".
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> parseWith(lenient, allowing(uploadRoot + "/some-batch/file.jar")));
+    assertThrows(
+        IllegalArgumentException.class, () -> parseWith(lenient, allowing(uploadRoot + "/**")));
   }
 
   private void parseSinglePattern(String pattern) {

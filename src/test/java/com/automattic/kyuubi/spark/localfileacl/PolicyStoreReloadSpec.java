@@ -279,6 +279,54 @@ class PolicyStoreReloadSpec {
   }
 
   @Test
+  void unresolvedExactRuleActivatesWhenItsFileAppearsWithoutAnAclEdit() throws Exception {
+    Path later = root.resolve("later.conf");
+    TestSupport.writeAcl(
+        aclFile,
+        """
+        version: 1
+        users:
+          alice:
+            allow:
+              - '%s'
+              - '%s'
+        """
+            .formatted(fileA, later));
+    PolicyStore store =
+        TestSupport.newLoadedStore(
+            aclFile, new AclYamlLoader.Options(uploadRoot, null, false, false), INTERVAL, clock);
+    LocalFileAclEngine engine = engineOn(store);
+
+    // The policy is valid with the missing rule omitted, and it authorizes nothing.
+    AclState.Valid lenient = assertInstanceOf(AclState.Valid.class, store.current());
+    assertEquals(1, lenient.policy().ruleCount());
+    assertEquals(Set.of(later), lenient.policy().unresolvedPaths());
+
+    // While the file is still missing, the unchanged digest keeps skipping the reparse — no
+    // churn, and no ERROR re-logged every interval.
+    tickPastInterval();
+    store.maybeReload();
+    assertSame(lenient.policy(), assertInstanceOf(AclState.Valid.class, store.current()).policy());
+
+    Files.writeString(later, "appeared");
+    // Not yet reloaded: the snapshot the engine holds still omits the rule.
+    assertThrows(
+        KyuubiException.class,
+        () -> engine.validate("alice", Map.of("spark.files", later.toString())));
+
+    tickPastInterval();
+    store.maybeReload();
+
+    // The digest never changed, so activation came from the forced reparse, which canonicalized
+    // the path and re-ran every policy check.
+    AclState.Valid activated = assertInstanceOf(AclState.Valid.class, store.current());
+    assertEquals(lenient.digest(), activated.digest());
+    assertEquals(2, activated.policy().ruleCount());
+    assertTrue(activated.policy().unresolvedPaths().isEmpty());
+    engine.validate("alice", Map.of("spark.files", later.toString()));
+  }
+
+  @Test
   void concurrentReadersOnlyObserveCompleteSnapshots() throws Exception {
     PolicyStore store = newStore();
     int readers = 4;
