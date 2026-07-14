@@ -58,12 +58,12 @@ below. The effective keys and cardinalities are logged at `INFO` during initiali
 
 | System property | Default | Meaning |
 | --- | --- | --- |
-| `kyuubi.local.file.acl.rules.file` | `$KYUUBI_CONF_DIR/kyuubi-local-file-acl.yaml` | ACL policy location |
+| `kyuubi.local.file.acl.rules.file` | `$KYUUBI_CONF_DIR/kyuubi-local-file-acl.yaml` | ACL policy location. With neither this property nor `KYUUBI_CONF_DIR` set, initialization fails |
 | `kyuubi.local.file.acl.reload.interval` | `PT60S` | ISO-8601 duration between reload checks |
 | `kyuubi.local.file.acl.extra.keys` | (none) | Additional policed keys, e.g. `spark.custom.files:list,spark.custom.keytab:scalar` |
 | `kyuubi.local.file.acl.excluded.keys` | (none) | Keys removed from the effective set; exclusions win over defaults and extras |
 | `kyuubi.local.file.acl.upload.root` | `$KYUUBI_WORK_DIR_ROOT/upload`, else `${user.dir}/upload` | Must match Kyuubi's upload work dir; created if absent and canonicalized at startup (startup fails otherwise) |
-| `kyuubi.local.file.acl.expected.owner` | (none) | When set, every reload requires the ACL file — and every ancestor directory of it — to be owned by this OS user (or root, for system directories) |
+| `kyuubi.local.file.acl.expected.owner` | (none) | When set, every reload requires the ACL file to be owned by this OS user, and every ancestor directory of it to be owned by this user or by root |
 | `kyuubi.local.file.acl.wildcards.enabled` | `false` | Whether ACL patterns may use glob matching. While disabled, any pattern containing `*`, `?`, `[`, `]`, `{`, or `}` makes the policy invalid |
 | `kyuubi.local.file.acl.fail.on.missing.files` | `true` | Whether an exact rule naming a nonexistent file makes the policy invalid. When `false`, the rule is logged at `ERROR` and omitted |
 
@@ -143,22 +143,26 @@ mv kyuubi-local-file-acl.yaml.tmp kyuubi-local-file-acl.yaml   # same filesystem
 
 ## Hot reload and failure behavior
 
-The policy is an immutable snapshot behind an atomic reference. On a non-blocking interval check,
-one request thread re-reads the file, skips reparsing when the SHA-256 digest is unchanged, and
-atomically publishes the new snapshot (modification time is deliberately not trusted).
+The policy is an immutable snapshot published through a volatile reference, so a request thread
+sees either the whole old policy or the whole new one. On a non-blocking interval check, one
+request thread re-reads the file, skips reparsing when the SHA-256 digest is unchanged, and
+publishes the new snapshot (modification time is deliberately not trusted).
 
 The digest fast path has one exception: when the active policy carries exact rules that were
-omitted for missing files, each check also tests whether one of those paths now exists, and forces
-a full reparse if so. An omitted rule therefore activates within one reload interval of its file
-appearing, without an ACL edit or a restart — and it activates only through that reparse, which
-canonicalizes the path and re-runs every policy check. It is never matched lexically. While the
-file stays missing, the reparse is skipped as usual, so nothing churns and the `ERROR` is not
-re-logged every interval.
+omitted for missing files, each check re-resolves those paths exactly as the loader does. Only a
+still-absent file keeps the fast path. If the path now resolves — or fails for any other reason,
+such as a symlink loop or an unreadable parent — a full reparse is forced, which then either
+activates the rule or invalidates the policy, matching what the loader would have done at load
+time. An omitted rule therefore activates within one reload interval of its file appearing,
+without an ACL edit or a restart, and only through that reparse, which canonicalizes the path and
+re-runs every policy check. It is never matched lexically. While the file stays absent, the
+reparse is skipped as usual, so nothing churns and the `ERROR` is not re-logged every interval.
 
 The plugin fails closed for local resources when: the initial ACL cannot be loaded (plugin
-initialization fails), a reload produces an invalid state (missing/unreadable/malformed file,
-invalid pattern, loose permissions), Hadoop group resolution fails, a local URI is malformed or
-missing, or no pattern matches. While the state is invalid the last valid policy is NOT used —
+initialization fails), a reload produces an invalid state (missing/unreadable/malformed file, loose
+permissions, an invalid pattern, a glob pattern while wildcards are disabled, or an exact rule
+whose file does not exist while `fail.on.missing.files` is on), Hadoop group resolution fails, a
+local URI is malformed or missing, or no pattern matches. While the state is invalid the last valid policy is NOT used —
 submissions with local resources are rejected until a valid policy is installed. Sessions without
 policed keys, or with remote-only resources, are unaffected. Current-batch upload exemptions also
 remain in effect while the state is invalid: they authorize only files the batch itself staged,
@@ -187,8 +191,10 @@ event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/e
   `cross-batch-upload`, `invalid-acl-state`, `group-resolution-failed`, `invalid-resource`
   (denials). Fields that do not apply to a decision are present with an empty value, so the schema
   is stable for downstream parsing.
-- Every value is escaped (quotes, backslashes, CR/LF, tabs, and other control characters), so a
-  crafted username or path cannot forge a record or split a decision across lines.
+- Every value is escaped: quotes, backslashes, and every ISO control character (C0, DEL, and C1 —
+  which includes U+0085 NEXT LINE), plus U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR,
+  which Unicode-aware log processors treat as line breaks. A crafted username or path can neither
+  forge a record nor split a decision across lines.
 - Exactly one record per **evaluated** local resource. Validation is fail-fast: once a resource is
   denied the submission is rejected, and the resources after it are never evaluated and never get
   a fabricated record. Remote URIs and unpoliced keys produce no records — the plugin makes no
