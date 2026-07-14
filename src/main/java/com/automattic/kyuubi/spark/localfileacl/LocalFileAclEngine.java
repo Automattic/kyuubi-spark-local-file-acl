@@ -12,8 +12,6 @@ import org.apache.kyuubi.KyuubiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.automattic.kyuubi.spark.localfileacl.LocalResourceParser.LocalResource;
-
 /**
  * Validates every policed local resource in a session configuration. A single unauthorized
  * resource rejects the complete submission by throwing {@link KyuubiException}, which aborts
@@ -51,17 +49,17 @@ public final class LocalFileAclEngine {
     Optional<Path> batchUploadDir = currentBatchUploadDir(sessionConf);
     GroupLookup groups = new GroupLookup(user);
     for (Map.Entry<String, String> entry : sessionConf.entrySet()) {
-      Optional<PolicedKey> policedKey = policedKeys.lookup(entry.getKey());
-      if (policedKey.isEmpty()) {
+      Optional<Cardinality> cardinality = policedKeys.lookup(entry.getKey());
+      if (cardinality.isEmpty()) {
         continue;
       }
-      List<LocalResource> locals;
+      List<Path> locals;
       try {
-        locals = parser.parse(policedKey.get(), entry.getValue());
+        locals = parser.parse(cardinality.get(), entry.getValue());
       } catch (IllegalArgumentException e) {
         throw deny(user, entry.getKey(), entry.getValue(), e.getMessage());
       }
-      for (LocalResource local : locals) {
+      for (Path local : locals) {
         authorize(user, entry.getKey(), local, state, batchUploadDir, groups);
       }
     }
@@ -70,12 +68,10 @@ public final class LocalFileAclEngine {
   private void authorize(
       String user,
       String key,
-      LocalResource local,
+      Path path,
       AclState state,
       Optional<Path> batchUploadDir,
       GroupLookup groups) {
-    Path path = local.realPath();
-
     // The upload exemption is evaluated before (and independently of) the ACL state: it covers
     // only files this batch itself staged, canonically confined to its own upload directory,
     // and never consults ACL rules — so an invalid policy does not fail batches that reference

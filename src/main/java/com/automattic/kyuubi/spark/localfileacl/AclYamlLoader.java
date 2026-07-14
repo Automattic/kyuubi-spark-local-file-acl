@@ -221,7 +221,7 @@ public final class AclYamlLoader {
       if (!(patternObject instanceof String pattern) || pattern.isBlank()) {
         throw new IllegalArgumentException("Non-string or blank pattern under " + owner);
       }
-      rules.add(compilePattern(pattern.trim(), owner));
+      rules.add(compilePattern(pattern.strip(), owner));
     }
     return rules;
   }

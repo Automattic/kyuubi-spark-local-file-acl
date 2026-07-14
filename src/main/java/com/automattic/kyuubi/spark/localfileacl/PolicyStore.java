@@ -2,12 +2,10 @@ package com.automattic.kyuubi.spark.localfileacl;
 
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HexFormat;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.LongSupplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,26 +22,18 @@ public final class PolicyStore {
   private final Path aclFile;
   private final AclYamlLoader loader;
   private final Duration reloadInterval;
-  /** Audit timestamps only; reload scheduling uses the monotonic ticker below. */
-  private final Clock clock;
   /** Monotonic nanosecond source, so a backward wall-clock step cannot delay revocation. */
-  private final java.util.function.LongSupplier ticker;
+  private final LongSupplier ticker;
 
-  private final AtomicReference<AclState> state = new AtomicReference<>();
+  private volatile AclState state;
   private final ReentrantLock reloadLock = new ReentrantLock();
   private volatile long nextCheckAtNanos;
-  private volatile String lastDigest;
 
-  public PolicyStore(
-      Path aclFile,
-      AclYamlLoader loader,
-      Duration reloadInterval,
-      Clock clock,
-      java.util.function.LongSupplier ticker) {
+  public PolicyStore(Path aclFile, AclYamlLoader loader, Duration reloadInterval,
+      LongSupplier ticker) {
     this.aclFile = aclFile;
     this.loader = loader;
     this.reloadInterval = reloadInterval;
-    this.clock = clock;
     this.ticker = ticker;
     this.nextCheckAtNanos = ticker.getAsLong() + reloadInterval.toNanos();
   }
@@ -51,13 +41,13 @@ public final class PolicyStore {
   /** Loads the initial policy; throws if it is invalid so plugin initialization fails. */
   public void initialLoad() {
     reloadNow();
-    if (state.get() instanceof AclState.Invalid invalid) {
+    if (state instanceof AclState.Invalid invalid) {
       throw new IllegalStateException("Initial ACL load failed: " + invalid.error());
     }
   }
 
   public AclState current() {
-    return state.get();
+    return state;
   }
 
   /** Non-blocking: at most one request thread performs the reload once the interval elapses. */
@@ -85,19 +75,17 @@ public final class PolicyStore {
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
-      if (digest.equals(lastDigest) && state.get() instanceof AclState.Valid) {
+      if (state instanceof AclState.Valid valid && digest.equals(valid.digest())) {
         LOG.debug("ACL digest unchanged ({}); skipping reparse", digest);
         return;
       }
       AclPolicy policy = loader.parse(content);
-      state.set(new AclState.Valid(policy, digest, clock.instant()));
-      lastDigest = digest;
+      state = new AclState.Valid(policy, digest);
       LOG.info("Activated ACL policy from {}: {} users, {} groups, {} rules, digest {}, {} ms",
           aclFile, policy.userRules().size(), policy.groupRules().size(), policy.ruleCount(),
           digest, (System.nanoTime() - startNanos) / 1_000_000);
     } catch (Exception e) {
-      lastDigest = null;
-      state.set(new AclState.Invalid(e.getMessage(), clock.instant()));
+      state = new AclState.Invalid(e.getMessage());
       LOG.warn("ACL policy at {} is invalid; local resources will be rejected until a valid "
           + "policy is installed", aclFile, e);
     }

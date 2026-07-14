@@ -3,6 +3,7 @@ package com.automattic.kyuubi.spark.localfileacl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -103,7 +104,8 @@ class PolicyStoreReloadSpec {
     store.maybeReload();
 
     AclState.Valid after = assertInstanceOf(AclState.Valid.class, store.current());
-    assertEquals(initial.loadedAt(), after.loadedAt());
+    // The same compiled policy instance proves the content was not reparsed.
+    assertSame(initial.policy(), after.policy());
     assertEquals(initial.digest(), after.digest());
   }
 

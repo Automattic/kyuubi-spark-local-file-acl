@@ -42,7 +42,7 @@ public record PluginSettings(
         System.getProperty(EXTRA_KEYS_PROP),
         System.getProperty(EXCLUDED_KEYS_PROP),
         uploadRoot,
-        expectedOwner == null || expectedOwner.isBlank() ? null : expectedOwner.trim());
+        expectedOwner == null || expectedOwner.isBlank() ? null : expectedOwner.strip());
   }
 
   private static Path resolveRulesFile() {

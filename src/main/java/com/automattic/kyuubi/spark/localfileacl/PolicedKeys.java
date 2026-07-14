@@ -7,32 +7,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import com.automattic.kyuubi.spark.localfileacl.PolicedKey.Cardinality;
-
 /**
- * The effective set of policed Spark configuration keys:
+ * The effective set of policed Spark configuration keys and their cardinalities:
  * {@code (defaults ∪ extra keys) - excluded keys}, all normalized with the same rules Kyuubi's
  * {@code SparkProcessBuilder.convertConfigKey} applies when assembling the spark-submit command.
  */
 public final class PolicedKeys {
 
-  private static final List<PolicedKey> DEFAULTS = List.of(
-      new PolicedKey("spark.files", Cardinality.LIST),
-      new PolicedKey("spark.jars", Cardinality.LIST),
-      new PolicedKey("spark.archives", Cardinality.LIST),
-      new PolicedKey("spark.yarn.jars", Cardinality.LIST),
-      new PolicedKey("spark.yarn.dist.files", Cardinality.LIST),
-      new PolicedKey("spark.yarn.dist.pyFiles", Cardinality.LIST),
-      new PolicedKey("spark.submit.pyFiles", Cardinality.LIST),
-      new PolicedKey("spark.yarn.dist.jars", Cardinality.LIST),
-      new PolicedKey("spark.yarn.dist.archives", Cardinality.LIST),
-      new PolicedKey("spark.kerberos.keytab", Cardinality.SCALAR),
-      new PolicedKey("spark.yarn.keytab", Cardinality.SCALAR),
-      new PolicedKey("spark.kubernetes.kerberos.krb5.path", Cardinality.SCALAR));
+  private static final Map<String, Cardinality> DEFAULTS = createDefaults();
 
-  private final Map<String, PolicedKey> bySparkKey;
+  private static Map<String, Cardinality> createDefaults() {
+    Map<String, Cardinality> defaults = new LinkedHashMap<>();
+    defaults.put("spark.files", Cardinality.LIST);
+    defaults.put("spark.jars", Cardinality.LIST);
+    defaults.put("spark.archives", Cardinality.LIST);
+    defaults.put("spark.yarn.jars", Cardinality.LIST);
+    defaults.put("spark.yarn.dist.files", Cardinality.LIST);
+    defaults.put("spark.yarn.dist.pyFiles", Cardinality.LIST);
+    defaults.put("spark.submit.pyFiles", Cardinality.LIST);
+    defaults.put("spark.yarn.dist.jars", Cardinality.LIST);
+    defaults.put("spark.yarn.dist.archives", Cardinality.LIST);
+    defaults.put("spark.kerberos.keytab", Cardinality.SCALAR);
+    defaults.put("spark.yarn.keytab", Cardinality.SCALAR);
+    defaults.put("spark.kubernetes.kerberos.krb5.path", Cardinality.SCALAR);
+    return Collections.unmodifiableMap(defaults);
+  }
 
-  private PolicedKeys(Map<String, PolicedKey> bySparkKey) {
+  private final Map<String, Cardinality> bySparkKey;
+
+  private PolicedKeys(Map<String, Cardinality> bySparkKey) {
     this.bySparkKey = Collections.unmodifiableMap(bySparkKey);
   }
 
@@ -52,17 +55,16 @@ public final class PolicedKeys {
   }
 
   public static PolicedKeys fromSettings(String extraKeysSpec, String excludedKeysSpec) {
-    Map<String, PolicedKey> effective = new LinkedHashMap<>();
-    DEFAULTS.forEach(key -> effective.put(key.sparkKey(), key));
+    Map<String, Cardinality> effective = new LinkedHashMap<>(DEFAULTS);
 
-    for (PolicedKey extra : parseExtraKeys(extraKeysSpec)) {
-      PolicedKey existing = effective.get(extra.sparkKey());
-      if (existing != null && existing.cardinality() != extra.cardinality()) {
-        throw new IllegalArgumentException("Conflicting definitions for policed key '"
-            + extra.sparkKey() + "': " + existing.cardinality() + " vs " + extra.cardinality());
+    parseExtraKeys(extraKeysSpec).forEach((key, cardinality) -> {
+      Cardinality existing = effective.get(key);
+      if (existing != null && existing != cardinality) {
+        throw new IllegalArgumentException("Conflicting definitions for policed key '" + key
+            + "': " + existing + " vs " + cardinality);
       }
-      effective.put(extra.sparkKey(), extra);
-    }
+      effective.put(key, cardinality);
+    });
 
     for (String excluded : splitSpec(excludedKeysSpec)) {
       String normalized = normalizeKey(excluded);
@@ -74,21 +76,19 @@ public final class PolicedKeys {
     return new PolicedKeys(effective);
   }
 
-  private static List<PolicedKey> parseExtraKeys(String extraKeysSpec) {
-    List<PolicedKey> extras = new ArrayList<>();
-    List<String> seen = new ArrayList<>();
+  private static Map<String, Cardinality> parseExtraKeys(String extraKeysSpec) {
+    Map<String, Cardinality> extras = new LinkedHashMap<>();
     for (String entry : splitSpec(extraKeysSpec)) {
       String[] parts = entry.split(":", -1);
       if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
         throw new IllegalArgumentException("Malformed extra key entry '" + entry
             + "'; expected '<key>:list' or '<key>:scalar'");
       }
-      String normalized = normalizeKey(parts[0].trim());
-      if (seen.contains(normalized)) {
+      String normalized = normalizeKey(parts[0].strip());
+      if (extras.containsKey(normalized)) {
         throw new IllegalArgumentException("Duplicate extra key definition for '" + normalized + "'");
       }
-      seen.add(normalized);
-      extras.add(new PolicedKey(normalized, Cardinality.parse(parts[1])));
+      extras.put(normalized, Cardinality.parse(parts[1]));
     }
     return extras;
   }
@@ -99,21 +99,21 @@ public final class PolicedKeys {
     }
     List<String> entries = new ArrayList<>();
     for (String entry : spec.split(",", -1)) {
-      String trimmed = entry.trim();
-      if (trimmed.isEmpty()) {
+      String stripped = entry.strip();
+      if (stripped.isEmpty()) {
         throw new IllegalArgumentException("Empty entry in key spec '" + spec + "'");
       }
-      entries.add(trimmed);
+      entries.add(stripped);
     }
     return entries;
   }
 
   /** Looks up a session configuration key after normalization; exact matches only. */
-  public Optional<PolicedKey> lookup(String sessionConfKey) {
+  public Optional<Cardinality> lookup(String sessionConfKey) {
     return Optional.ofNullable(bySparkKey.get(normalizeKey(sessionConfKey)));
   }
 
-  public Map<String, PolicedKey> effectiveKeys() {
+  public Map<String, Cardinality> effectiveKeys() {
     return bySparkKey;
   }
 }
