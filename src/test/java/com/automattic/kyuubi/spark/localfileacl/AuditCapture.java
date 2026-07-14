@@ -32,10 +32,13 @@ final class AuditCapture implements AutoCloseable {
     context.updateLoggers();
   }
 
+  /** Removes the appender from the configuration too, so specs do not accumulate stale ones. */
   @Override
   public void close() {
     LoggerContext context = (LoggerContext) LogManager.getContext(false);
-    context.getConfiguration().removeLogger(AuditLog.LOGGER_NAME);
+    Configuration configuration = context.getConfiguration();
+    configuration.removeLogger(AuditLog.LOGGER_NAME);
+    configuration.getAppenders().remove(appender.getName());
     context.updateLoggers();
     appender.stop();
   }

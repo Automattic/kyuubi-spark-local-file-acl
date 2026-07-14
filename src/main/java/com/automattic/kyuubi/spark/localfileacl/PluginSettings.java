@@ -52,8 +52,10 @@ public record PluginSettings(
   }
 
   /**
-   * Only {@code true} and {@code false} are accepted. {@code Boolean.parseBoolean} would map a typo
-   * to {@code false}, silently turning off the fail-closed treatment of missing ACL files.
+   * Only {@code true} and {@code false} are accepted, for every boolean setting. {@code
+   * Boolean.parseBoolean} would map a typo to {@code false}, which for {@link
+   * #FAIL_ON_MISSING_FILES_PROP} silently turns off the fail-closed treatment of exact rules whose
+   * file does not exist — a mode a security-sensitive flag must never select by accident.
    */
   private static boolean booleanProperty(String property, boolean defaultValue) {
     String configured = System.getProperty(property);

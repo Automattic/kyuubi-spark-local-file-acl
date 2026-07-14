@@ -47,7 +47,7 @@ class PluginSettingsSpec {
   @Test
   void rejectsBlankAndUnrecognizedBooleans() {
     // Boolean.parseBoolean would read every one of these as 'false', silently turning off the
-    // fail-closed handling of missing ACL files.
+    // fail-closed handling of exact rules whose file does not exist.
     for (String value : List.of("", "   ", "yes", "1", "off", "tru")) {
       System.setProperty(PluginSettings.FAIL_ON_MISSING_FILES_PROP, value);
       IllegalArgumentException e =

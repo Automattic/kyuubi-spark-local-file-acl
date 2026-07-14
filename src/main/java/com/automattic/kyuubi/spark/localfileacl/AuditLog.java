@@ -24,6 +24,8 @@ final class AuditLog {
   /** U+2029 PARAGRAPH SEPARATOR. */
   private static final char PARAGRAPH_SEPARATOR = (char) 0x2029;
 
+  private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
+
   private AuditLog() {}
 
   /** A grant: {@code principalType} is the kind of rule that matched (user, group, or upload). */
@@ -86,12 +88,19 @@ final class AuditLog {
         case '\t' -> line.append("\\t");
         default -> {
           if (Character.isISOControl(c) || c == LINE_SEPARATOR || c == PARAGRAPH_SEPARATOR) {
-            line.append(String.format("\\u%04x", (int) c));
+            appendUnicodeEscape(line, c);
           } else {
             line.append(c);
           }
         }
       }
+    }
+  }
+
+  private static void appendUnicodeEscape(StringBuilder line, char c) {
+    line.append("\\u");
+    for (int shift = 12; shift >= 0; shift -= 4) {
+      line.append(HEX_DIGITS[(c >> shift) & 0xf]);
     }
   }
 }
