@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
-import com.automattic.kyuubi.spark.localfileacl.PolicedKey.Cardinality;
-
 class PolicedKeysSpec {
 
   @Test
@@ -30,8 +28,8 @@ class PolicedKeysSpec {
     assertTrue(keys.lookup("yarn.dist.files").isPresent());
     assertTrue(keys.lookup("submit.pyFiles").isPresent());
     assertTrue(keys.lookup("kerberos.keytab").isPresent());
-    assertEquals(Cardinality.SCALAR, keys.lookup("spark.yarn.keytab").orElseThrow().cardinality());
-    assertEquals(Cardinality.LIST, keys.lookup("spark.archives").orElseThrow().cardinality());
+    assertEquals(Cardinality.SCALAR, keys.lookup("spark.yarn.keytab").orElseThrow());
+    assertEquals(Cardinality.LIST, keys.lookup("spark.archives").orElseThrow());
   }
 
   @Test
@@ -49,9 +47,9 @@ class PolicedKeysSpec {
   void addsExtraKeysWithDeclaredCardinality() {
     PolicedKeys keys =
         PolicedKeys.fromSettings("spark.custom.files:list, custom.keytab:scalar", null);
-    assertEquals(Cardinality.LIST, keys.lookup("spark.custom.files").orElseThrow().cardinality());
-    assertEquals(Cardinality.SCALAR, keys.lookup("custom.keytab").orElseThrow().cardinality());
-    assertEquals(Cardinality.SCALAR, keys.lookup("spark.custom.keytab").orElseThrow().cardinality());
+    assertEquals(Cardinality.LIST, keys.lookup("spark.custom.files").orElseThrow());
+    assertEquals(Cardinality.SCALAR, keys.lookup("custom.keytab").orElseThrow());
+    assertEquals(Cardinality.SCALAR, keys.lookup("spark.custom.keytab").orElseThrow());
   }
 
   @Test

@@ -1,6 +1,7 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.apache.hadoop.security.UserGroupInformation;
@@ -13,11 +14,7 @@ public final class HadoopGroupResolver implements GroupResolver {
 
   @Override
   public Set<String> resolveGroups(String user) throws Exception {
-    String[] groups = UserGroupInformation.createRemoteUser(user).getGroupNames();
-    Set<String> result = new LinkedHashSet<>();
-    for (String group : groups) {
-      result.add(group);
-    }
-    return result;
+    return new LinkedHashSet<>(
+        List.of(UserGroupInformation.createRemoteUser(user).getGroupNames()));
   }
 }

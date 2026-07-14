@@ -12,14 +12,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.automattic.kyuubi.spark.localfileacl.LocalResourceParser.LocalResource;
-import com.automattic.kyuubi.spark.localfileacl.PolicedKey.Cardinality;
-
 class LocalResourceParserSpec {
 
-  private static final PolicedKey LIST_KEY = new PolicedKey("spark.files", Cardinality.LIST);
-  private static final PolicedKey SCALAR_KEY =
-      new PolicedKey("spark.kerberos.keytab", Cardinality.SCALAR);
+  private static final Cardinality LIST_KEY = Cardinality.LIST;
+  private static final Cardinality SCALAR_KEY = Cardinality.SCALAR;
 
   @TempDir
   Path tempDir;
@@ -36,22 +32,22 @@ class LocalResourceParserSpec {
 
   @Test
   void acceptsBareAbsolutePathsAndFileUris() {
-    assertEquals(file, single(LIST_KEY, file.toString()).realPath());
-    assertEquals(file, single(LIST_KEY, "file:" + file).realPath());
-    assertEquals(file, single(LIST_KEY, "file://" + file).realPath());
-    assertEquals(file, single(LIST_KEY, "file:///" + file.toString().substring(1)).realPath());
+    assertEquals(file, single(LIST_KEY, file.toString()));
+    assertEquals(file, single(LIST_KEY, "file:" + file));
+    assertEquals(file, single(LIST_KEY, "file://" + file));
+    assertEquals(file, single(LIST_KEY, "file:///" + file.toString().substring(1)));
   }
 
   @Test
   void treatsSchemesCaseInsensitively() {
-    assertEquals(file, single(LIST_KEY, "FILE:" + file).realPath());
+    assertEquals(file, single(LIST_KEY, "FILE:" + file));
     assertTrue(parser.parse(LIST_KEY, "HDFS://nn/x.jar").isEmpty());
   }
 
   @Test
   void removesAliasFragmentBeforeResolving() {
-    assertEquals(file, single(LIST_KEY, file + "#alias.conf").realPath());
-    assertEquals(file, single(LIST_KEY, "file:" + file + "#alias").realPath());
+    assertEquals(file, single(LIST_KEY, file + "#alias.conf"));
+    assertEquals(file, single(LIST_KEY, "file:" + file + "#alias"));
   }
 
   @Test
@@ -64,16 +60,16 @@ class LocalResourceParserSpec {
 
   @Test
   void mixesLocalAndRemoteEntriesInLists() {
-    List<LocalResource> locals =
+    List<Path> locals =
         parser.parse(LIST_KEY, "hdfs://nn/a.jar," + file + ",s3a://b/c.jar");
     assertEquals(1, locals.size());
-    assertEquals(file, locals.get(0).realPath());
+    assertEquals(file, locals.get(0));
   }
 
   @Test
   void scalarValuesAreNeverCommaSplit() throws Exception {
     Path commaFile = Files.writeString(root.resolve("a,b.keytab"), "x");
-    assertEquals(commaFile, single(SCALAR_KEY, commaFile.toString()).realPath());
+    assertEquals(commaFile, single(SCALAR_KEY, commaFile.toString()));
     // The same value under a LIST key splits and fails on the missing halves.
     assertThrows(IllegalArgumentException.class,
         () -> parser.parse(LIST_KEY, commaFile.toString()));
@@ -96,6 +92,33 @@ class LocalResourceParserSpec {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + ","));
     assertThrows(IllegalArgumentException.class,
         () -> parser.parse(LIST_KEY, "/path with space.jar"));
+  }
+
+  @Test
+  void neverAuthorizesAStrippedVariantOfAUnicodeWhitespacePath() throws Exception {
+    // A real file whose name ends in Unicode whitespace (EM SPACE, U+2003). Spark trims only
+    // ASCII whitespace, so the raw value must not be validated as its stripped sibling - it
+    // is rejected outright (illegal URI character) instead of resolving to the wrong file.
+    Files.writeString(root.resolve("data.conf\u2003"), "x");
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, file + "\u2003"));
+  }
+
+  @Test
+  void preservesEntryBytesExactlyAsSparkResolvesThem() {
+    // Only trailing whitespace of the COMPLETE value is dropped, mirroring Kyuubi's trim of
+    // the assembled --conf argument.
+    assertEquals(file, single(LIST_KEY, file + " \t"));
+    assertEquals(file, single(SCALAR_KEY, file + "  "));
+    // Everything else survives Kyuubi's argument trim and reaches Spark verbatim, so leading
+    // whitespace and whitespace before a comma are rejected (illegal URI) rather than being
+    // authorized as their trimmed siblings.
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, "  " + file));
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, file + " ,hdfs://nn/x.jar"));
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, "hdfs://nn/x.jar, " + file));
   }
 
   @Test
@@ -122,11 +145,11 @@ class LocalResourceParserSpec {
   @Test
   void canonicalizesSymlinksToTheirTarget() throws Exception {
     Path link = Files.createSymbolicLink(root.resolve("link.conf"), file);
-    assertEquals(file, single(LIST_KEY, link.toString()).realPath());
+    assertEquals(file, single(LIST_KEY, link.toString()));
   }
 
-  private LocalResource single(PolicedKey key, String value) {
-    List<LocalResource> locals = parser.parse(key, value);
+  private Path single(Cardinality key, String value) {
+    List<Path> locals = parser.parse(key, value);
     assertEquals(1, locals.size());
     return locals.get(0);
   }

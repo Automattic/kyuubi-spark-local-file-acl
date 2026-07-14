@@ -2,6 +2,7 @@ package com.automattic.kyuubi.spark.localfileacl;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -13,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -36,7 +38,7 @@ public final class AclYamlLoader {
   /** Test seam: runs between the pre-read integrity check and the content read. */
   private final Runnable preReadHook;
   /** Test seam: resolves the owning OS user of a path. */
-  private final java.util.function.Function<Path, String> ownerLookup;
+  private final Function<Path, String> ownerLookup;
 
   /**
    * @param uploadRoot canonicalized Kyuubi shared upload root
@@ -55,7 +57,7 @@ public final class AclYamlLoader {
       Path uploadRoot,
       String expectedOwner,
       Runnable preReadHook,
-      java.util.function.Function<Path, String> ownerLookup) {
+      Function<Path, String> ownerLookup) {
     this.uploadRoot = uploadRoot;
     this.expectedOwner = expectedOwner;
     this.preReadHook = preReadHook;
@@ -66,7 +68,7 @@ public final class AclYamlLoader {
     try {
       return Files.getOwner(path, LinkOption.NOFOLLOW_LINKS).getName();
     } catch (IOException e) {
-      throw new java.io.UncheckedIOException(e);
+      throw new UncheckedIOException(e);
     }
   }
 
@@ -221,7 +223,7 @@ public final class AclYamlLoader {
       if (!(patternObject instanceof String pattern) || pattern.isBlank()) {
         throw new IllegalArgumentException("Non-string or blank pattern under " + owner);
       }
-      rules.add(compilePattern(pattern.trim(), owner));
+      rules.add(compilePattern(pattern.strip(), owner));
     }
     return rules;
   }
@@ -252,10 +254,11 @@ public final class AclYamlLoader {
       }
       return new CompiledRule.Glob(pattern, matcher);
     }
-    rejectUploadRootTarget(Path.of(pattern).normalize(), pattern, owner);
+    Path patternPath = Path.of(pattern);
+    rejectUploadRootTarget(patternPath.normalize(), pattern, owner);
     Path canonical;
     try {
-      canonical = Path.of(pattern).toRealPath();
+      canonical = patternPath.toRealPath();
     } catch (IOException e) {
       throw new IllegalArgumentException("Exact pattern '" + pattern + "' under " + owner
           + " does not resolve to an existing file: " + e.getMessage(), e);

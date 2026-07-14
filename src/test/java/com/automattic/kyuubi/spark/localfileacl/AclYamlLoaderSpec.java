@@ -5,9 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.EnumSet;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -192,9 +197,9 @@ class AclYamlLoaderSpec {
     Path loose = root.resolve("loose.yaml");
     Files.writeString(loose, "version: 1\n");
     Files.setPosixFilePermissions(loose,
-        java.util.EnumSet.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-            java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-            java.nio.file.attribute.PosixFilePermission.GROUP_WRITE));
+        EnumSet.of(PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_WRITE));
     assertThrows(Exception.class, () -> loader.readVerified(loose));
 
     Path uploaded = uploadRoot.resolve("acl.yaml");
@@ -231,13 +236,13 @@ class AclYamlLoaderSpec {
     // attempt observes a size/mtime mismatch and the read is never accepted.
     AclYamlLoader racingLoader = new AclYamlLoader(uploadRoot, null, () -> {
       try {
-        Files.writeString(acl, "# grew\n", java.nio.file.StandardOpenOption.APPEND);
-      } catch (java.io.IOException e) {
-        throw new java.io.UncheckedIOException(e);
+        Files.writeString(acl, "# grew\n", StandardOpenOption.APPEND);
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
       }
     });
-    java.io.IOException e =
-        assertThrows(java.io.IOException.class, () -> racingLoader.readVerified(acl));
+    IOException e =
+        assertThrows(IOException.class, () -> racingLoader.readVerified(acl));
     assertTrue(e.getMessage().contains("changed while being read"), e.getMessage());
   }
 
@@ -248,14 +253,14 @@ class AclYamlLoaderSpec {
     byte[] filler = new byte[(int) AclYamlLoader.MAX_ACL_BYTES + 1024];
     AclYamlLoader racingLoader = new AclYamlLoader(uploadRoot, null, () -> {
       try {
-        Files.write(acl, filler, java.nio.file.StandardOpenOption.APPEND);
-      } catch (java.io.IOException e) {
-        throw new java.io.UncheckedIOException(e);
+        Files.write(acl, filler, StandardOpenOption.APPEND);
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
       }
     });
     // The bounded stream stops at the cap instead of allocating the whole grown file.
-    java.io.IOException e =
-        assertThrows(java.io.IOException.class, () -> racingLoader.readVerified(acl));
+    IOException e =
+        assertThrows(IOException.class, () -> racingLoader.readVerified(acl));
     assertTrue(e.getMessage().contains("exceeds"), e.getMessage());
   }
 
@@ -266,12 +271,12 @@ class AclYamlLoaderSpec {
     Path acl = parent.resolve("acl.yaml");
     TestSupport.writeAcl(acl, "version: 1\n");
     // The immediate parent is tight, but a group-writable grandparent still allows an entry swap.
-    Files.setPosixFilePermissions(grandParent, java.util.EnumSet.of(
-        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-        java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
-        java.nio.file.attribute.PosixFilePermission.GROUP_WRITE,
-        java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE));
+    Files.setPosixFilePermissions(grandParent, EnumSet.of(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.OWNER_EXECUTE,
+        PosixFilePermission.GROUP_WRITE,
+        PosixFilePermission.GROUP_EXECUTE));
     assertThrows(Exception.class, () -> loader.readVerified(acl));
   }
 
@@ -302,7 +307,7 @@ class AclYamlLoaderSpec {
     // vector that must be rejected with the ancestor-specific error.
     AclYamlLoader foreignAncestorLoader = new AclYamlLoader(uploadRoot, me, null,
         path -> path.equals(foreignDir) ? "intruder" : me);
-    java.io.IOException e = assertThrows(java.io.IOException.class,
+    IOException e = assertThrows(IOException.class,
         () -> foreignAncestorLoader.readVerified(acl));
     assertTrue(e.getMessage().contains("ancestor directory"), e.getMessage());
     assertTrue(e.getMessage().contains("intruder"), e.getMessage());
@@ -328,12 +333,12 @@ class AclYamlLoaderSpec {
     Path looseDir = Files.createDirectory(root.resolve("loose-dir"));
     Path acl = looseDir.resolve("acl.yaml");
     TestSupport.writeAcl(acl, "version: 1\n");
-    Files.setPosixFilePermissions(looseDir, java.util.EnumSet.of(
-        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-        java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
-        java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE,
-        java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE));
+    Files.setPosixFilePermissions(looseDir, EnumSet.of(
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.OWNER_EXECUTE,
+        PosixFilePermission.OTHERS_WRITE,
+        PosixFilePermission.OTHERS_EXECUTE));
     assertThrows(Exception.class, () -> loader.readVerified(acl));
   }
 

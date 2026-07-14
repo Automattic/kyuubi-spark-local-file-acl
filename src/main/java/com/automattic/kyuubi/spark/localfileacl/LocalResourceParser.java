@@ -7,35 +7,47 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.Optional;
 
 /**
- * Extracts the Kyuubi-server-local resources from a policed configuration value. Remote URIs
- * (hdfs, s3, http, ...) are ignored; malformed or non-concrete local entries are rejected with
- * {@link IllegalArgumentException}.
+ * Extracts the Kyuubi-server-local resources from a policed configuration value as canonical
+ * paths. Remote URIs (hdfs, s3, http, ...) are ignored; malformed or non-concrete local entries
+ * are rejected with {@link IllegalArgumentException}.
  */
 public final class LocalResourceParser {
 
-  /** A server-local resource resolved to its canonical path. */
-  public record LocalResource(String rawEntry, Path realPath) {}
-
-  public List<LocalResource> parse(PolicedKey key, String rawValue) {
-    List<String> entries = switch (key.cardinality()) {
-      case LIST -> List.of(rawValue.split(",", -1));
-      case SCALAR -> List.of(rawValue);
+  public List<Path> parse(Cardinality cardinality, String rawValue) {
+    // Kyuubi trims the complete --conf argument when assembling spark-submit, so trailing
+    // ASCII whitespace of the whole value never reaches Spark. Every other byte must be
+    // preserved and validated exactly as submitted: Spark resolves entries untrimmed on
+    // several code paths, so validating a trimmed variant could authorize a different file
+    // than Spark opens. Entries with surrounding whitespace therefore fail URI parsing and
+    // are rejected instead of being silently rewritten.
+    String effectiveValue = stripTrailingAsciiWhitespace(rawValue);
+    List<String> entries = switch (cardinality) {
+      case LIST -> List.of(effectiveValue.split(",", -1));
+      case SCALAR -> List.of(effectiveValue);
     };
-    List<LocalResource> locals = new ArrayList<>();
+    List<Path> locals = new ArrayList<>();
     for (String entry : entries) {
-      String trimmed = entry.trim();
-      if (trimmed.isEmpty()) {
+      if (entry.trim().isEmpty()) {
         throw new IllegalArgumentException("Empty resource entry");
       }
-      parseEntry(trimmed).ifPresent(locals::add);
+      parseEntry(entry).ifPresent(locals::add);
     }
     return locals;
   }
 
-  private java.util.Optional<LocalResource> parseEntry(String entry) {
+  /** Trailing side of {@link String#trim()} semantics: removes chars {@code <= U+0020} only. */
+  private static String stripTrailingAsciiWhitespace(String value) {
+    int end = value.length();
+    while (end > 0 && value.charAt(end - 1) <= ' ') {
+      end--;
+    }
+    return value.substring(0, end);
+  }
+
+  private Optional<Path> parseEntry(String entry) {
     URI uri;
     try {
       uri = new URI(entry);
@@ -44,8 +56,8 @@ public final class LocalResourceParser {
           + e.getMessage(), e);
     }
     String scheme = uri.getScheme();
-    if (scheme != null && !"file".equals(scheme.toLowerCase(Locale.ROOT))) {
-      return java.util.Optional.empty();
+    if (scheme != null && !scheme.equalsIgnoreCase("file")) {
+      return Optional.empty();
     }
     String authority = uri.getAuthority();
     if (authority != null && !authority.isEmpty()) {
@@ -60,7 +72,7 @@ public final class LocalResourceParser {
     }
     // uri.getPath() already excludes any '#alias' fragment.
     String path = uri.getPath();
-    if (path == null || path.isEmpty() || !path.startsWith("/")) {
+    if (path == null || !path.startsWith("/")) {
       throw new IllegalArgumentException("Local resource '" + entry + "' must be an absolute path");
     }
     if (AclYamlLoader.containsGlobMeta(path)) {
@@ -77,6 +89,6 @@ public final class LocalResourceParser {
     if (!Files.isRegularFile(realPath)) {
       throw new IllegalArgumentException("Local resource '" + entry + "' is not a regular file");
     }
-    return java.util.Optional.of(new LocalResource(entry, realPath));
+    return Optional.of(realPath);
   }
 }

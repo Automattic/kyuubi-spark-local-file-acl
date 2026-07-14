@@ -3,17 +3,20 @@ package com.automattic.kyuubi.spark.localfileacl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -103,7 +106,8 @@ class PolicyStoreReloadSpec {
     store.maybeReload();
 
     AclState.Valid after = assertInstanceOf(AclState.Valid.class, store.current());
-    assertEquals(initial.loadedAt(), after.loadedAt());
+    // The same compiled policy instance proves the content was not reparsed.
+    assertSame(initial.policy(), after.policy());
     assertEquals(initial.digest(), after.digest());
   }
 
@@ -165,7 +169,7 @@ class PolicyStoreReloadSpec {
 
   @Test
   void currentBatchUploadsRemainExemptWhileAclStateIsInvalid() throws Exception {
-    String batchId = java.util.UUID.randomUUID().toString();
+    String batchId = UUID.randomUUID().toString();
     Path staged = TestSupport.stageUpload(uploadRoot, batchId, "job.jar");
     PolicyStore store = newStore();
     LocalFileAclEngine engine = engineOn(store);
@@ -194,9 +198,9 @@ class PolicyStoreReloadSpec {
 
     TestSupport.writeAcl(aclFile, allowOnly(fileA));
     Files.setPosixFilePermissions(aclFile, Set.of(
-        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-        java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE));
+        PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE,
+        PosixFilePermission.OTHERS_WRITE));
     tickPastInterval();
     store.maybeReload();
     assertInstanceOf(AclState.Invalid.class, store.current());

@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.UUID;
 
 import org.apache.kyuubi.config.KyuubiConf;
 import org.apache.kyuubi.server.KyuubiRestFrontendService;
@@ -134,7 +135,7 @@ class KyuubiServerITSpec {
     // Stage a file where a batch upload would live, then try to reach it from an interactive
     // session with forged exemption keys. The ignore list strips them, so the upload-root path
     // is denied unconditionally instead of being exempted.
-    String forgedBatchId = java.util.UUID.randomUUID().toString();
+    String forgedBatchId = UUID.randomUUID().toString();
     Path uploadRoot = Path.of(System.getProperty(PluginSettings.UPLOAD_ROOT_PROP));
     Path staged = Files.writeString(
         Files.createDirectories(uploadRoot.resolve(forgedBatchId)).resolve("stolen.jar"), "x");

@@ -28,7 +28,7 @@ final class TestSupport {
   static PolicyStore newLoadedStore(
       Path aclFile, Path uploadRoot, Duration interval, MutableClock clock) {
     PolicyStore store = new PolicyStore(
-        aclFile, new AclYamlLoader(uploadRoot, null), interval, clock, clock::nanos);
+        aclFile, new AclYamlLoader(uploadRoot, null), interval, clock::nanos);
     store.initialLoad();
     return store;
   }

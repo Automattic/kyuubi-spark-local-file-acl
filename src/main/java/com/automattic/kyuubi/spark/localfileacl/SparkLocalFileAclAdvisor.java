@@ -3,8 +3,6 @@ package com.automattic.kyuubi.spark.localfileacl;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Clock;
-import java.util.Collections;
 import java.util.Map;
 
 import org.apache.kyuubi.plugin.SessionConfAdvisor;
@@ -35,25 +33,24 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
           settings.rulesFile(),
           new AclYamlLoader(uploadRoot, settings.expectedOwner()),
           settings.reloadInterval(),
-          Clock.systemUTC(),
           System::nanoTime);
       store.initialLoad();
       this.engine =
           new LocalFileAclEngine(policedKeys, store, new HadoopGroupResolver(), uploadRoot);
-      policedKeys.effectiveKeys().forEach((key, policedKey) ->
-          LOG.info("Policing local file key {} ({})", key, policedKey.cardinality()));
+      policedKeys.effectiveKeys().forEach((key, cardinality) ->
+          LOG.info("Policing local file key {} ({})", key, cardinality));
       LOG.info("SparkLocalFileAclAdvisor initialized: rulesFile={}, reloadInterval={}, "
           + "uploadRoot={}", settings.rulesFile(), settings.reloadInterval(), uploadRoot);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
       LOG.error("SparkLocalFileAclAdvisor initialization failed", e);
-      throw e instanceof RuntimeException runtime ? runtime : new IllegalStateException(e);
+      throw e;
     }
   }
 
   @Override
   public Map<String, String> getConfOverlay(String user, Map<String, String> sessionConf) {
     engine.validate(user, sessionConf);
-    return Collections.emptyMap();
+    return Map.of();
   }
 
   /**
