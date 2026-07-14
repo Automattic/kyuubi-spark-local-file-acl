@@ -5,7 +5,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.security.Groups;
+import org.apache.hadoop.security.UserGroupInformation;
 
 final class TestSupport {
 
@@ -38,5 +43,31 @@ final class TestSupport {
   /** Canonicalized temp dir (macOS temp dirs live behind the /var -> /private/var symlink). */
   static Path real(Path dir) throws IOException {
     return dir.toRealPath();
+  }
+
+  /** Stages a file as if uploaded by the given batch: {@code <uploadRoot>/<batchId>/<fileName>}. */
+  static Path stageUpload(Path uploadRoot, String batchId, String fileName) throws IOException {
+    return Files.writeString(
+        Files.createDirectories(uploadRoot.resolve(batchId)).resolve(fileName), "x");
+  }
+
+  /** Session conf carrying Kyuubi's reserved upload keys plus the submitted resource. */
+  static Map<String, String> uploadedConf(String batchId, String path) {
+    return Map.of(
+        "kyuubi.batch.resource.uploaded", "true",
+        "kyuubi.batch.id", batchId,
+        "spark.files", path);
+  }
+
+  /**
+   * Installs a Hadoop group mapping JVM-wide. The Groups singleton must be replaced BEFORE
+   * {@code setConfiguration}: UGI initialization captures
+   * {@code Groups.getUserToGroupsMappingService(conf)}, which returns the existing singleton if
+   * any earlier spec already created one.
+   */
+  static void installHadoopGroupMapping(Configuration conf) {
+    UserGroupInformation.reset();
+    Groups.getUserToGroupsMappingServiceWithLoadedConfiguration(conf);
+    UserGroupInformation.setConfiguration(conf);
   }
 }

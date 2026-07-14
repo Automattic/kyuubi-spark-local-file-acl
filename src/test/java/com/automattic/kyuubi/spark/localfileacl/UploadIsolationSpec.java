@@ -32,10 +32,8 @@ class UploadIsolationSpec {
   void setUp() throws Exception {
     root = TestSupport.real(tempDir);
     uploadRoot = Files.createDirectories(root.resolve("upload"));
-    currentUpload = Files.writeString(
-        Files.createDirectories(uploadRoot.resolve(currentBatchId)).resolve("job.jar"), "x");
-    otherUpload = Files.writeString(
-        Files.createDirectories(uploadRoot.resolve(otherBatchId)).resolve("job.jar"), "x");
+    currentUpload = TestSupport.stageUpload(uploadRoot, currentBatchId, "job.jar");
+    otherUpload = TestSupport.stageUpload(uploadRoot, otherBatchId, "job.jar");
     Path aclFile = root.resolve("acl.yaml");
     // A deliberately broad grant covering the whole temp tree, including the upload root.
     TestSupport.writeAcl(aclFile, """
@@ -50,10 +48,7 @@ class UploadIsolationSpec {
   }
 
   private Map<String, String> uploadedConf(String batchId, String path) {
-    return Map.of(
-        "kyuubi.batch.resource.uploaded", "true",
-        "kyuubi.batch.id", batchId,
-        "spark.files", path);
+    return TestSupport.uploadedConf(batchId, path);
   }
 
   @Test
