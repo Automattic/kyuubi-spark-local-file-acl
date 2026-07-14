@@ -1,5 +1,6 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,7 @@ public record AclPolicy(
   private static Map<String, List<CompiledRule>> deepCopy(Map<String, List<CompiledRule>> rules) {
     Map<String, List<CompiledRule>> copy = new LinkedHashMap<>();
     rules.forEach((principal, principalRules) -> copy.put(principal, List.copyOf(principalRules)));
-    return java.util.Collections.unmodifiableMap(copy);
+    return Collections.unmodifiableMap(copy);
   }
 
   public List<CompiledRule> rulesForUser(String user) {

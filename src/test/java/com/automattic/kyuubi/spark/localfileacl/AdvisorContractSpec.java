@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import org.apache.kyuubi.KyuubiException;
 import org.junit.jupiter.api.AfterEach;
@@ -105,7 +106,7 @@ class AdvisorContractSpec {
 
     Path staged = Files.writeString(
         Files.createDirectories(realWork.resolve("upload")
-            .resolve(java.util.UUID.randomUUID().toString())).resolve("other.jar"), "x");
+            .resolve(UUID.randomUUID().toString())).resolve("other.jar"), "x");
     KyuubiException e = assertThrows(KyuubiException.class,
         () -> advisor.getConfOverlay("alice", Map.of("spark.files", staged.toString())));
     // Denied specifically by cross-batch upload isolation, not by a generic no-rule miss —
