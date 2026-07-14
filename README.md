@@ -99,11 +99,12 @@ groups:
 
 The file must be owned by the Kyuubi administrator (enforce with
 `kyuubi.local.file.acl.expected.owner`, which also requires every ancestor directory to be owned
-by that user or root — otherwise a directory-entry swap could substitute the policy). The file
-itself must be mode `0600` or `0640`; ancestor directories need execute permission, so `0700`,
-`0750`, or `0755` are fine — what is rejected is group- or world-*write* on the file or any
-ancestor directory, except sticky directories such as `/tmp` (mode `1777`), where the sticky bit
-already prevents other users from swapping entries they do not own. Each reload re-verifies all of this, reads through a stream bounded at 1 MiB,
+by that user or root — otherwise a directory-entry swap could substitute the policy). The
+enforced permission rule is: no group- or world-*write* bit on the file or any ancestor
+directory, except sticky directories such as `/tmp` (mode `1777`), where the sticky bit already
+prevents other users from swapping entries they do not own. Read bits are not enforced —
+`0644` is accepted — but `0600` or `0640` is recommended since the policy reveals server path
+layout; ancestor directories need execute permission, so `0700`, `0750`, or `0755` are all fine. Each reload re-verifies all of this, reads through a stream bounded at 1 MiB,
 and accepts the content only when the file key, size, and modification time are identical before
 and after the read and a second integrity check passes — so a file swapped or rewritten mid-read
 is never accepted. Update it atomically:
@@ -127,7 +128,10 @@ initialization fails), a reload produces an invalid state (missing/unreadable/ma
 invalid pattern, loose permissions), Hadoop group resolution fails, a local URI is malformed or
 missing, or no pattern matches. While the state is invalid the last valid policy is NOT used —
 submissions with local resources are rejected until a valid policy is installed. Sessions without
-policed keys, or with remote-only resources, are unaffected. Denials throw
+policed keys, or with remote-only resources, are unaffected. Current-batch upload exemptions also
+remain in effect while the state is invalid: they authorize only files the batch itself staged,
+canonically confined to its own upload directory, and never consult ACL rules — so an ACL outage
+does not fail batches that reference nothing but their own uploads. Denials throw
 `org.apache.kyuubi.KyuubiException` naming the user, configuration key, and path; grants and
 denials are audit-logged through SLF4J into Kyuubi's normal logging.
 

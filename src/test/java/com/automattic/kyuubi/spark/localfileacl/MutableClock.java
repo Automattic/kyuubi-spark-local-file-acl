@@ -15,6 +15,11 @@ final class MutableClock extends Clock {
     instant = instant.plus(duration);
   }
 
+  /** Monotonic ticker derived from the same instant, for PolicyStore reload scheduling. */
+  long nanos() {
+    return instant.toEpochMilli() * 1_000_000L;
+  }
+
   @Override
   public ZoneId getZone() {
     return ZoneOffset.UTC;

@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
-import java.time.Clock;
 import java.time.Duration;
 import java.util.Set;
 
@@ -21,15 +20,16 @@ final class TestSupport {
     Files.setPosixFilePermissions(file, OWNER_ONLY);
   }
 
-  static PolicyStore newLoadedStore(Path aclFile, Path uploadRoot, Duration interval, Clock clock) {
-    PolicyStore store =
-        new PolicyStore(aclFile, new AclYamlLoader(uploadRoot, null), interval, clock);
+  static PolicyStore newLoadedStore(
+      Path aclFile, Path uploadRoot, Duration interval, MutableClock clock) {
+    PolicyStore store = new PolicyStore(
+        aclFile, new AclYamlLoader(uploadRoot, null), interval, clock, clock::nanos);
     store.initialLoad();
     return store;
   }
 
   static LocalFileAclEngine newEngine(
-      Path aclFile, Path uploadRoot, GroupResolver groupResolver, Clock clock) {
+      Path aclFile, Path uploadRoot, GroupResolver groupResolver, MutableClock clock) {
     PolicyStore store = newLoadedStore(aclFile, uploadRoot, Duration.ofSeconds(60), clock);
     return new LocalFileAclEngine(
         PolicedKeys.fromSettings(null, null), store, groupResolver, uploadRoot);
