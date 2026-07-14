@@ -146,6 +146,24 @@ class PolicyStoreReloadSpec {
   }
 
   @Test
+  void reloadFollowsMonotonicTimeWhenWallClockStepsBackwards() throws Exception {
+    PolicyStore store = newStore();
+    LocalFileAclEngine engine = engineOn(store);
+    TestSupport.writeAcl(aclFile, allowOnly(fileB));
+
+    // Simulate an NTP step: wall time jumps an hour into the past while monotonic time keeps
+    // advancing past the reload interval. Wall-clock scheduling would postpone this reload
+    // (and the revocation of fileA) until wall time caught back up.
+    clock.rewindWallClock(Duration.ofHours(1));
+    clock.advance(INTERVAL.plusSeconds(1));
+    store.maybeReload();
+
+    engine.validate("alice", Map.of("spark.files", fileB.toString()));
+    assertThrows(KyuubiException.class,
+        () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
+  }
+
+  @Test
   void currentBatchUploadsRemainExemptWhileAclStateIsInvalid() throws Exception {
     String batchId = java.util.UUID.randomUUID().toString();
     Path staged = Files.writeString(
