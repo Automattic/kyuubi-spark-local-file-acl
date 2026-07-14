@@ -102,7 +102,8 @@ The file must be owned by the Kyuubi administrator (enforce with
 by that user or root — otherwise a directory-entry swap could substitute the policy). The file
 itself must be mode `0600` or `0640`; ancestor directories need execute permission, so `0700`,
 `0750`, or `0755` are fine — what is rejected is group- or world-*write* on the file or any
-ancestor directory. Each reload re-verifies all of this, reads through a stream bounded at 1 MiB,
+ancestor directory, except sticky directories such as `/tmp` (mode `1777`), where the sticky bit
+already prevents other users from swapping entries they do not own. Each reload re-verifies all of this, reads through a stream bounded at 1 MiB,
 and accepts the content only when the file key, size, and modification time are identical before
 and after the read and a second integrity check passes — so a file swapped or rewritten mid-read
 is never accepted. Update it atomically:
