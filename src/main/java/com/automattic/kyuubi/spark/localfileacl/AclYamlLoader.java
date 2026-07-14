@@ -8,7 +8,6 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -148,15 +147,20 @@ public final class AclYamlLoader {
   }
 
   private static void rejectLoosePermissions(Path path, String what) throws IOException {
+    int mode;
     try {
-      Set<PosixFilePermission> permissions =
-          Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-      if (permissions.contains(PosixFilePermission.GROUP_WRITE)
-          || permissions.contains(PosixFilePermission.OTHERS_WRITE)) {
-        throw new IOException(what + " must not be group- or world-writable: " + path);
-      }
+      mode = (int) Files.getAttribute(path, "unix:mode", LinkOption.NOFOLLOW_LINKS);
     } catch (UnsupportedOperationException ignored) {
       // Non-POSIX filesystem; ownership must be enforced by the deployment.
+      return;
+    }
+    boolean groupOrWorldWritable = (mode & 0022) != 0;
+    // A sticky directory (like /tmp, mode 1777) restricts rename/delete of entries to their
+    // owners, so it does not enable the directory-entry swap this check defends against. The
+    // file-type bits come from the same mode snapshot to avoid a second racy stat.
+    boolean stickyDirectory = (mode & 01000) != 0 && (mode & 0170000) == 0040000;
+    if (groupOrWorldWritable && !stickyDirectory) {
+      throw new IOException(what + " must not be group- or world-writable: " + path);
     }
   }
 

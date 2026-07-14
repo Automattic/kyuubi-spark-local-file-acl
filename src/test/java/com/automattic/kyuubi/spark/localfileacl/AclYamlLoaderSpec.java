@@ -309,6 +309,21 @@ class AclYamlLoaderSpec {
   }
 
   @Test
+  void readVerifiedAllowsStickyWorldWritableAncestorsLikeTmp() throws Exception {
+    Path sticky = Files.createDirectory(root.resolve("sticky"));
+    Path sub = Files.createDirectory(sticky.resolve("sub"));
+    Path acl = sub.resolve("acl.yaml");
+    TestSupport.writeAcl(acl, "version: 1\n");
+    // /tmp-style 1777: world-writable but sticky, so entries cannot be swapped by other users.
+    Files.setAttribute(sticky, "unix:mode", 01777);
+    assertEquals("version: 1\n", new String(loader.readVerified(acl)));
+
+    // Without the sticky bit the same mode is rejected.
+    Files.setAttribute(sticky, "unix:mode", 0777);
+    assertThrows(Exception.class, () -> loader.readVerified(acl));
+  }
+
+  @Test
   void readVerifiedRejectsLooseDirectoryPermissions() throws Exception {
     Path looseDir = Files.createDirectory(root.resolve("loose-dir"));
     Path acl = looseDir.resolve("acl.yaml");
