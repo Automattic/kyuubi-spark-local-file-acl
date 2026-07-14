@@ -50,11 +50,10 @@ class PolicyStoreReloadSpec {
 
   private String allowOnly(Path path) {
     return """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s'
+            - '%s'
         """
         .formatted(path);
   }
@@ -246,12 +245,11 @@ class PolicyStoreReloadSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         groups:
           g:
-            allow:
-              - '%s'
-              - '%s'
+            - '%s'
+            - '%s'
         """
             .formatted(fileA, fileB));
     PolicyStore store = newStore();
@@ -259,7 +257,7 @@ class PolicyStoreReloadSpec {
     // captured its snapshot. Swap in a policy that grants nothing and force a reload.
     GroupResolver swappingResolver =
         user -> {
-          TestSupport.writeAcl(aclFile, "version: 1\n");
+          TestSupport.writeAcl(aclFile, "version: 2\n");
           tickPastInterval();
           store.maybeReload();
           return Set.of("g");
@@ -284,12 +282,11 @@ class PolicyStoreReloadSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s'
-              - '%s'
+            - '%s'
+            - '%s'
         """
             .formatted(fileA, later));
     PolicyStore store =
@@ -332,12 +329,11 @@ class PolicyStoreReloadSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s'
-              - '%s'
+            - '%s'
+            - '%s'
         """
             .formatted(fileA, later));
     PolicyStore store =

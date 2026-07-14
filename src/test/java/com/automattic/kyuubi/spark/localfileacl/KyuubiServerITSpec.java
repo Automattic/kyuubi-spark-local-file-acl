@@ -61,14 +61,12 @@ class KyuubiServerITSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/res/*.conf'
+            - '%s/res/*.conf'
           anonymous:
-            allow:
-              - '%s/res/*.conf'
+            - '%s/res/*.conf'
         """
             .formatted(root, root));
 

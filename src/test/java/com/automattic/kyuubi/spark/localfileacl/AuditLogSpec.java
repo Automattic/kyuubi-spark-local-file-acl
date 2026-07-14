@@ -54,15 +54,13 @@ class AuditLogSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/alice/*.conf'
+            - '%s/alice/*.conf'
         groups:
           data-eng:
-            allow:
-              - '%s/shared/*.jar'
+            - '%s/shared/*.jar'
         """
             .formatted(root, root));
     audit = new AuditCapture();

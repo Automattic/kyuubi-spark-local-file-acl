@@ -32,7 +32,7 @@ public final class AclYamlLoader {
 
   private static final Logger LOG = LoggerFactory.getLogger(AclYamlLoader.class);
 
-  private static final int SUPPORTED_VERSION = 1;
+  private static final int SUPPORTED_VERSION = 2;
   private static final String GLOB_META_CHARS = "*?[]{}";
   private static final Set<String> TOP_LEVEL_KEYS = Set.of("version", "users", "groups");
 
@@ -45,7 +45,7 @@ public final class AclYamlLoader {
    * @param uploadRoot canonicalized Kyuubi shared upload root
    * @param expectedOwner required owner of the ACL file and its ancestor directories, or null to
    *     skip the ownership checks
-   * @param wildcardsEnabled whether glob patterns may appear in {@code allow} entries
+   * @param wildcardsEnabled whether glob patterns may appear in ACL entries
    * @param failOnMissingFiles whether an exact rule naming a nonexistent file invalidates the
    *     policy; when false the rule is logged at ERROR and omitted
    */
@@ -231,32 +231,18 @@ public final class AclYamlLoader {
           if (principal == null || principal.isBlank()) {
             throw new IllegalArgumentException("Blank principal name in '" + sectionName + "'");
           }
-          Map<String, Object> entry = asMap(body, sectionName + "." + principal);
-          for (String key : entry.keySet()) {
-            if (!"allow".equals(key)) {
-              throw new IllegalArgumentException(
-                  "Unknown key '"
-                      + key
-                      + "' under "
-                      + sectionName
-                      + "."
-                      + principal
-                      + "; only 'allow' is supported");
-            }
-          }
-          compiled.put(
-              principal,
-              compilePatterns(entry.get("allow"), sectionName + "." + principal, unresolved));
+          compiled.put(principal, compilePatterns(body, sectionName + "." + principal, unresolved));
         });
     return compiled;
   }
 
+  /** A principal maps straight to its patterns: allow rules are the only kind of rule. */
   private List<CompiledRule> compilePatterns(Object allow, String owner, Set<Path> unresolved) {
     if (allow == null) {
       return List.of();
     }
     if (!(allow instanceof List<?> patterns)) {
-      throw new IllegalArgumentException("'allow' under " + owner + " must be a list of patterns");
+      throw new IllegalArgumentException(owner + " must map to a list of patterns");
     }
     List<CompiledRule> rules = new ArrayList<>();
     for (Object patternObject : patterns) {

@@ -34,11 +34,10 @@ class AdvisorContractSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/res/*.conf'
+            - '%s/res/*.conf'
         """
             .formatted(root));
     System.setProperty(PluginSettings.RULES_FILE_PROP, aclFile.toString());

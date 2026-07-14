@@ -76,32 +76,39 @@ cardinalities, conflicting duplicates, and exclusions that match nothing fail pl
 initialization (and therefore server session handling) at startup. These settings are
 startup-only — they are not part of YAML hot reload.
 
-**Upgrading from 1.0.x:** wildcard matching used to be unconditional and is now off by default. A
-deployment whose ACL uses glob patterns must set
-`-Dkyuubi.local.file.acl.wildcards.enabled=true` before upgrading, or plugin initialization fails
-and the server rejects every session carrying a policed key.
+**Upgrading from 1.0.x:** two changes require action before upgrading, and both fail loudly rather
+than silently, so a stale configuration cannot weaken enforcement.
+
+- Wildcard matching used to be unconditional and is now off by default. A deployment whose ACL uses
+  glob patterns must set `-Dkyuubi.local.file.acl.wildcards.enabled=true`.
+- The ACL schema is now `version: 2`: each principal maps straight to its list of patterns, with no
+  `allow:` key in between. A `version: 1` file is rejected.
+
+Either one leaves plugin initialization failing, and the server then rejects every session carrying
+a policed key.
 
 ## ACL file
 
 ```yaml
-version: 1
+version: 2
 
 users:
   alice:
-    allow:
-      - '/opt/kyuubi/resources/alice/*.conf'
-      - '/opt/kyuubi/resources/libraries/**/alice-*.jar'
+    - '/opt/kyuubi/resources/alice/*.conf'
+    - '/opt/kyuubi/resources/libraries/**/alice-*.jar'
 
 groups:
   data-engineering:
-    allow:
-      - '/opt/kyuubi/resources/shared/*.properties'
-      - '/opt/kyuubi/certificates/{development,staging}/*.pem'
+    - '/opt/kyuubi/resources/shared/*.properties'
+    - '/opt/kyuubi/certificates/{development,staging}/*.pem'
 ```
 
+- Each principal maps directly to its list of allowed patterns. There are no deny rules — no match
+  means denied — so there is nothing for an `allow:` key to distinguish, and any other shape
+  (a mapping, a bare string) is rejected.
 - Effective permissions are the union of the username's rules and the rules of every Hadoop group
   containing the user (resolved via `UserGroupInformation`, i.e. Kyuubi's `HadoopGroupProvider`
-  behavior). There are no deny rules; no match means denied.
+  behavior).
 - Patterns use Java NIO `glob:` syntax (`*`, `**`, `?`, `[abc]`, `{one,two}`) **only when
   `kyuubi.local.file.acl.wildcards.enabled=true`**. While wildcards are disabled (the default), a
   pattern containing a glob metacharacter is rejected with an error naming the property — it is
@@ -115,7 +122,7 @@ groups:
   tolerated — permission errors, symlink loops, and other I/O failures still invalidate the
   policy.
 - Patterns must be absolute local paths, without URI schemes or `..` segments, and must not target
-  the Kyuubi upload root. Duplicate YAML keys (principals, `allow` fields) are rejected.
+  the Kyuubi upload root. Duplicate principals are rejected rather than silently collapsed.
 - Submitted values must identify concrete files: globs, relative paths, `file` URIs with an
   authority or query, missing files, and non-regular files are rejected. `#alias` fragments are
   stripped; paths are canonicalized with `toRealPath()` before matching, so symlinks cannot
