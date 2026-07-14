@@ -102,8 +102,23 @@ class LocalResourceParserSpec {
     Files.writeString(root.resolve("data.conf\u2003"), "x");
     assertThrows(IllegalArgumentException.class,
         () -> parser.parse(LIST_KEY, file + "\u2003"));
-    // ASCII whitespace is trimmed exactly like Spark does.
-    assertEquals(file, single(LIST_KEY, "  " + file + "\t"));
+  }
+
+  @Test
+  void preservesEntryBytesExactlyAsSparkResolvesThem() {
+    // Only trailing whitespace of the COMPLETE value is dropped, mirroring Kyuubi's trim of
+    // the assembled --conf argument.
+    assertEquals(file, single(LIST_KEY, file + " \t"));
+    assertEquals(file, single(SCALAR_KEY, file + "  "));
+    // Everything else survives Kyuubi's argument trim and reaches Spark verbatim, so leading
+    // whitespace and whitespace before a comma are rejected (illegal URI) rather than being
+    // authorized as their trimmed siblings.
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, "  " + file));
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, file + " ,hdfs://nn/x.jar"));
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, "hdfs://nn/x.jar, " + file));
   }
 
   @Test

@@ -17,23 +17,34 @@ import java.util.Optional;
 public final class LocalResourceParser {
 
   public List<Path> parse(Cardinality cardinality, String rawValue) {
+    // Kyuubi trims the complete --conf argument when assembling spark-submit, so trailing
+    // ASCII whitespace of the whole value never reaches Spark. Every other byte must be
+    // preserved and validated exactly as submitted: Spark resolves entries untrimmed on
+    // several code paths, so validating a trimmed variant could authorize a different file
+    // than Spark opens. Entries with surrounding whitespace therefore fail URI parsing and
+    // are rejected instead of being silently rewritten.
+    String effectiveValue = stripTrailingAsciiWhitespace(rawValue);
     List<String> entries = switch (cardinality) {
-      case LIST -> List.of(rawValue.split(",", -1));
-      case SCALAR -> List.of(rawValue);
+      case LIST -> List.of(effectiveValue.split(",", -1));
+      case SCALAR -> List.of(effectiveValue);
     };
     List<Path> locals = new ArrayList<>();
     for (String entry : entries) {
-      // ASCII-only trim(), NOT strip(): Spark trims at most ASCII whitespace from resource
-      // values, so validating a Unicode-stripped variant would authorize a different file
-      // than Spark resolves. Unicode-whitespace-suffixed values then fail URI parsing and
-      // are rejected rather than silently rewritten.
-      String trimmed = entry.trim();
-      if (trimmed.isEmpty()) {
+      if (entry.trim().isEmpty()) {
         throw new IllegalArgumentException("Empty resource entry");
       }
-      parseEntry(trimmed).ifPresent(locals::add);
+      parseEntry(entry).ifPresent(locals::add);
     }
     return locals;
+  }
+
+  /** Trailing side of {@link String#trim()} semantics: removes chars {@code <= U+0020} only. */
+  private static String stripTrailingAsciiWhitespace(String value) {
+    int end = value.length();
+    while (end > 0 && value.charAt(end - 1) <= ' ') {
+      end--;
+    }
+    return value.substring(0, end);
   }
 
   private Optional<Path> parseEntry(String entry) {
