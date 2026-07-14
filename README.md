@@ -214,24 +214,70 @@ Retention, file permissions, shipping, and durability of that file are operator 
 
 ## Batch upload exemption
 
-Files uploaded via the REST batch API are staged under `<upload-root>/<batch-id>/` before the
-advisor runs and are exempted from ACL rules — but only for the batch that uploaded them. Any
-other path under the shared upload root is denied unconditionally, even when a broad ACL glob
-matches it, so one batch can never reference another batch's uploads.
+### Why an exemption exists
 
-The exemption trusts Kyuubi's reserved keys `kyuubi.batch.resource.uploaded` and
-`kyuubi.batch.id`. Interactive clients must be prevented from forging them with:
+The REST batch API lets a client upload its jar with the submission. Kyuubi stages that file at
+`<upload-root>/<batch-id>/<filename>` **before** the advisor runs, then passes the staged
+server-local path in the session configuration. To the ACL that path is indistinguishable from
+`/etc/kyuubi/kyuubi.keytab` — it is just a local file on the Kyuubi server — so it would be denied:
+no administrator can write a rule for a path containing a batch UUID that does not exist yet.
+Batch uploads would stop working entirely.
+
+So a file the batch itself uploaded is authorized without consulting the ACL.
+
+### Why it is scoped to a single batch
+
+The upload root is shared by every batch. An exemption of the form "anything under the upload root
+is fine" would let batch B name `<upload-root>/<batch-A-id>/app.jar` and read what batch A — quite
+possibly a different user — uploaded.
+
+The check is therefore two-stage. A canonical path under the upload root is allowed only when it
+is also under `<upload-root>/<this-batch-id>/`. Any other path beneath the upload root is **denied
+unconditionally and never falls through to the ACL rules** — so an administrator who writes a broad
+glob like `/**` does not accidentally re-open cross-batch access. Paths under the upload root are
+decided entirely by this logic, never by patterns.
+
+The exemption also requires the batch id to parse as a UUID and its upload directory to exist, and
+it canonicalizes with `toRealPath()` before comparing, so a symlink planted inside an upload
+directory cannot point at `/etc` and inherit the exemption.
+
+Because it never consults ACL rules, the exemption keeps working while the ACL state is invalid: a
+broken policy file does not fail batches that reference nothing but their own uploads.
+
+### Why the ignore list is mandatory
+
+The exemption trusts two keys Kyuubi injects into batch session configuration:
+`kyuubi.batch.resource.uploaded` and `kyuubi.batch.id`. Nothing in the session configuration proves
+they came from the server — an interactive JDBC client can send any key it likes in its connection
+string:
+
+```text
+jdbc:kyuubi://host:10009/;?kyuubi.batch.resource.uploaded=true;kyuubi.batch.id=<someone-elses-batch-uuid>;spark.files=<upload-root>/<that-uuid>/app.jar
+```
+
+Without a defense, that forges the exemption and reads another batch's upload. Configure the
+server to strip both keys from interactive sessions:
 
 ```properties
 kyuubi.session.conf.ignore.list=kyuubi.batch.resource.uploaded,kyuubi.batch.id
 ```
 
-**Do not use `kyuubi.session.conf.restrict.list` for these keys on Kyuubi 1.11.x.** Kyuubi itself
-injects both keys into every REST batch conf, and `AbstractSession` eagerly validates the full
-batch conf against the restrict list, so restricting them fails every batch submission (verified
-against 1.11.1). The ignore list strips the keys from interactive sessions (neutralizing forgery)
-while the separate batch ignore list — which must NOT contain these keys — leaves batch conf
-intact.
+The advisor then never sees the forged keys, finds no current batch, and denies the path as a
+cross-batch upload (`reason="cross-batch-upload"` in the audit log).
+`KyuubiServerITSpec.interactiveSessionCannotForgeReservedUploadKeys` runs exactly this attack
+against a real server.
+
+### Do not use the restrict list for these keys on Kyuubi 1.11.x
+
+`kyuubi.session.conf.restrict.list` is the intuitive choice — it makes Kyuubi *reject* a session
+that sets a listed key — and it **breaks every batch submission**. Kyuubi injects these same two
+keys into batch configuration itself, and `AbstractSession` eagerly validates the complete batch
+configuration against the restrict list, so the server rejects its own injected keys (verified
+against 1.11.1).
+
+The ignore list *strips* instead of *rejects*, and it applies to interactive sessions, so it
+neutralizes forgery while leaving legitimate batch configuration intact. The separate batch ignore
+list must NOT contain these keys.
 
 ## Optional Kyuubi 1.12+ global hardening
 
