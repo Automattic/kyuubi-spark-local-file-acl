@@ -23,11 +23,15 @@ public final class LocalResourceParser {
     };
     List<Path> locals = new ArrayList<>();
     for (String entry : entries) {
-      String stripped = entry.strip();
-      if (stripped.isEmpty()) {
+      // ASCII-only trim(), NOT strip(): Spark trims at most ASCII whitespace from resource
+      // values, so validating a Unicode-stripped variant would authorize a different file
+      // than Spark resolves. Unicode-whitespace-suffixed values then fail URI parsing and
+      // are rejected rather than silently rewritten.
+      String trimmed = entry.trim();
+      if (trimmed.isEmpty()) {
         throw new IllegalArgumentException("Empty resource entry");
       }
-      parseEntry(stripped).ifPresent(locals::add);
+      parseEntry(trimmed).ifPresent(locals::add);
     }
     return locals;
   }

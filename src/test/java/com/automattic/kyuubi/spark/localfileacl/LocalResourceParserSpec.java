@@ -95,6 +95,18 @@ class LocalResourceParserSpec {
   }
 
   @Test
+  void neverAuthorizesAStrippedVariantOfAUnicodeWhitespacePath() throws Exception {
+    // A real file whose name ends in Unicode whitespace (EM SPACE, U+2003). Spark trims only
+    // ASCII whitespace, so the raw value must not be validated as its stripped sibling - it
+    // is rejected outright (illegal URI character) instead of resolving to the wrong file.
+    Files.writeString(root.resolve("data.conf\u2003"), "x");
+    assertThrows(IllegalArgumentException.class,
+        () -> parser.parse(LIST_KEY, file + "\u2003"));
+    // ASCII whitespace is trimmed exactly like Spark does.
+    assertEquals(file, single(LIST_KEY, "  " + file + "\t"));
+  }
+
+  @Test
   void rejectsUriQueries() {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + "?query=1"));
     assertThrows(IllegalArgumentException.class,
