@@ -55,7 +55,7 @@ public final class LocalFileAclEngine {
       try {
         locals = parser.parse(cardinality.get(), entry.getValue());
       } catch (IllegalArgumentException e) {
-        throw deny(user, entry.getKey(), entry.getValue(), e.getMessage());
+        throw deny(user, entry.getKey(), entry.getValue(), "invalid-resource", e.getMessage());
       }
       for (Path local : locals) {
         authorize(user, entry.getKey(), local, state, batchUploadDir, groups);
@@ -76,13 +76,14 @@ public final class LocalFileAclEngine {
     // nothing but their own uploads.
     if (path.startsWith(uploadRoot)) {
       if (batchUploadDir.isPresent() && path.startsWith(batchUploadDir.get())) {
-        LOG.info(
-            "Local file access granted: user={}, key={}, path={}, reason=upload-exemption, "
-                + "batchUploadDir={}",
+        AuditLog.allow(
             user,
             key,
-            path,
-            batchUploadDir.get());
+            path.toString(),
+            "upload-exemption",
+            "upload",
+            batchUploadDir.get().toString(),
+            "");
         return;
       }
       // Unconditional cross-batch isolation: never fall through to username or group rules.
@@ -90,26 +91,23 @@ public final class LocalFileAclEngine {
           user,
           key,
           path.toString(),
+          "cross-batch-upload",
           "path is under the Kyuubi upload root but not part of the current batch upload");
     }
 
     if (!(state instanceof AclState.Valid valid)) {
       String error = state instanceof AclState.Invalid invalid ? invalid.error() : "unknown";
-      throw deny(user, key, path.toString(), "the local file ACL state is invalid: " + error);
+      throw deny(
+          user,
+          key,
+          path.toString(),
+          "invalid-acl-state",
+          "the local file ACL state is invalid: " + error);
     }
 
     for (CompiledRule rule : valid.policy().rulesForUser(user)) {
       if (rule.matches(path)) {
-        LOG.debug("Matched user rule '{}' for user {}", rule.patternText(), user);
-        LOG.info(
-            "Local file access granted: user={}, groups={}, key={}, path={}, "
-                + "reason=user-rule, principal={}, pattern={}",
-            user,
-            groups.resolvedOrPlaceholder(),
-            key,
-            path,
-            user,
-            rule.patternText());
+        AuditLog.allow(user, key, path.toString(), "user-rule", "user", user, rule.patternText());
         return;
       }
     }
@@ -119,22 +117,14 @@ public final class LocalFileAclEngine {
       resolvedGroups = groups.resolve(groupResolver);
     } catch (Exception e) {
       LOG.warn("Hadoop group resolution failed for user {}", user, e);
-      throw deny(user, key, path.toString(), "Hadoop group resolution failed");
+      throw deny(
+          user, key, path.toString(), "group-resolution-failed", "Hadoop group resolution failed");
     }
     for (String group : resolvedGroups) {
       for (CompiledRule rule : valid.policy().rulesForGroup(group)) {
         if (rule.matches(path)) {
-          LOG.debug(
-              "Matched group rule '{}' via group {} for user {}", rule.patternText(), group, user);
-          LOG.info(
-              "Local file access granted: user={}, groups={}, key={}, path={}, "
-                  + "reason=group-rule, principal={}, pattern={}",
-              user,
-              resolvedGroups,
-              key,
-              path,
-              group,
-              rule.patternText());
+          AuditLog.allow(
+              user, key, path.toString(), "group-rule", "group", group, rule.patternText());
           return;
         }
       }
@@ -143,6 +133,7 @@ public final class LocalFileAclEngine {
         user,
         key,
         path.toString(),
+        "no-matching-rule",
         "no ACL rule authorizes this path (groups=" + groups.resolvedOrPlaceholder() + ")");
   }
 
@@ -173,13 +164,13 @@ public final class LocalFileAclEngine {
     }
   }
 
-  private RuntimeException deny(String user, String key, String resource, String reason) {
-    LOG.warn(
-        "Local file access denied: user={}, key={}, resource={}, reason={}",
-        user,
-        key,
-        resource,
-        reason);
+  /**
+   * @param reason stable audit token
+   * @param detail human-readable explanation carried in the exception the client sees
+   */
+  private RuntimeException deny(
+      String user, String key, String resource, String reason, String detail) {
+    AuditLog.deny(user, key, resource, reason);
     return sneakyThrow(
         new KyuubiException(
             "Local file access denied for user '"
@@ -189,7 +180,7 @@ public final class LocalFileAclEngine {
                 + "', resource '"
                 + resource
                 + "': "
-                + reason,
+                + detail,
             null));
   }
 

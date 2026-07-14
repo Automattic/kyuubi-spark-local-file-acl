@@ -28,10 +28,16 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
       PolicedKeys policedKeys =
           PolicedKeys.fromSettings(settings.extraKeysSpec(), settings.excludedKeysSpec());
       Path uploadRoot = canonicalUploadRoot(settings.uploadRoot());
+      AclYamlLoader.Options options =
+          new AclYamlLoader.Options(
+              uploadRoot,
+              settings.expectedOwner(),
+              settings.wildcardsEnabled(),
+              settings.failOnMissingFiles());
       PolicyStore store =
           new PolicyStore(
               settings.rulesFile(),
-              new AclYamlLoader(uploadRoot, settings.expectedOwner()),
+              new AclYamlLoader(options),
               settings.reloadInterval(),
               System::nanoTime);
       store.initialLoad();
@@ -43,10 +49,12 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
               (key, cardinality) -> LOG.info("Policing local file key {} ({})", key, cardinality));
       LOG.info(
           "SparkLocalFileAclAdvisor initialized: rulesFile={}, reloadInterval={}, "
-              + "uploadRoot={}",
+              + "uploadRoot={}, wildcardsEnabled={}, failOnMissingFiles={}",
           settings.rulesFile(),
           settings.reloadInterval(),
-          uploadRoot);
+          uploadRoot,
+          settings.wildcardsEnabled(),
+          settings.failOnMissingFiles());
     } catch (RuntimeException e) {
       LOG.error("SparkLocalFileAclAdvisor initialization failed", e);
       throw e;

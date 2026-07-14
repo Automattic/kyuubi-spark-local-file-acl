@@ -50,11 +50,10 @@ class PolicyStoreReloadSpec {
 
   private String allowOnly(Path path) {
     return """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s'
+            - '%s'
         """
         .formatted(path);
   }
@@ -246,12 +245,11 @@ class PolicyStoreReloadSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         groups:
           g:
-            allow:
-              - '%s'
-              - '%s'
+            - '%s'
+            - '%s'
         """
             .formatted(fileA, fileB));
     PolicyStore store = newStore();
@@ -259,7 +257,7 @@ class PolicyStoreReloadSpec {
     // captured its snapshot. Swap in a policy that grants nothing and force a reload.
     GroupResolver swappingResolver =
         user -> {
-          TestSupport.writeAcl(aclFile, "version: 1\n");
+          TestSupport.writeAcl(aclFile, "version: 2\n");
           tickPastInterval();
           store.maybeReload();
           return Set.of("g");
@@ -276,6 +274,85 @@ class PolicyStoreReloadSpec {
     assertThrows(
         KyuubiException.class,
         () -> engine.validate("bob", Map.of("spark.files", fileA.toString())));
+  }
+
+  @Test
+  void unresolvedExactRuleActivatesWhenItsFileAppearsWithoutAnAclEdit() throws Exception {
+    Path later = root.resolve("later.conf");
+    TestSupport.writeAcl(
+        aclFile,
+        """
+        version: 2
+        users:
+          alice:
+            - '%s'
+            - '%s'
+        """
+            .formatted(fileA, later));
+    PolicyStore store =
+        TestSupport.newLoadedStore(
+            aclFile, new AclYamlLoader.Options(uploadRoot, null, false, false), INTERVAL, clock);
+    LocalFileAclEngine engine = engineOn(store);
+
+    // The policy is valid with the missing rule omitted, and it authorizes nothing.
+    AclState.Valid lenient = assertInstanceOf(AclState.Valid.class, store.current());
+    assertEquals(1, lenient.policy().ruleCount());
+    assertEquals(Set.of(later), lenient.policy().unresolvedPaths());
+
+    // While the file is still missing, the unchanged digest keeps skipping the reparse — no
+    // churn, and no ERROR re-logged every interval.
+    tickPastInterval();
+    store.maybeReload();
+    assertSame(lenient.policy(), assertInstanceOf(AclState.Valid.class, store.current()).policy());
+
+    Files.writeString(later, "appeared");
+    // Not yet reloaded: the snapshot the engine holds still omits the rule.
+    assertThrows(
+        KyuubiException.class,
+        () -> engine.validate("alice", Map.of("spark.files", later.toString())));
+
+    tickPastInterval();
+    store.maybeReload();
+
+    // The digest never changed, so activation came from the forced reparse, which canonicalized
+    // the path and re-ran every policy check.
+    AclState.Valid activated = assertInstanceOf(AclState.Valid.class, store.current());
+    assertEquals(lenient.digest(), activated.digest());
+    assertEquals(2, activated.policy().ruleCount());
+    assertTrue(activated.policy().unresolvedPaths().isEmpty());
+    engine.validate("alice", Map.of("spark.files", later.toString()));
+  }
+
+  @Test
+  void unresolvedPathTurningIntoABrokenPathInvalidatesInsteadOfLingering() throws Exception {
+    Path later = root.resolve("later.conf");
+    TestSupport.writeAcl(
+        aclFile,
+        """
+        version: 2
+        users:
+          alice:
+            - '%s'
+            - '%s'
+        """
+            .formatted(fileA, later));
+    PolicyStore store =
+        TestSupport.newLoadedStore(
+            aclFile, new AclYamlLoader.Options(uploadRoot, null, false, false), INTERVAL, clock);
+    assertEquals(
+        Set.of(later),
+        assertInstanceOf(AclState.Valid.class, store.current()).policy().unresolvedPaths());
+
+    // The path stops being merely absent and becomes a symlink loop: the loader tolerates only a
+    // genuinely missing file, so probing must force a reparse rather than read this as "still
+    // missing" and keep serving a policy the loader would now reject.
+    Path partner = root.resolve("loop-partner.conf");
+    Files.createSymbolicLink(later, partner);
+    Files.createSymbolicLink(partner, later);
+    tickPastInterval();
+    store.maybeReload();
+
+    assertInstanceOf(AclState.Invalid.class, store.current());
   }
 
   @Test

@@ -1,5 +1,7 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.io.IOException;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
@@ -75,18 +77,22 @@ public final class PolicyStore {
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
-      if (state instanceof AclState.Valid valid && digest.equals(valid.digest())) {
+      if (state instanceof AclState.Valid valid
+          && digest.equals(valid.digest())
+          && !anyUnresolvedPathResolvable(valid.policy())) {
         LOG.debug("ACL digest unchanged ({}); skipping reparse", digest);
         return;
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
       LOG.info(
-          "Activated ACL policy from {}: {} users, {} groups, {} rules, digest {}, {} ms",
+          "Activated ACL policy from {}: {} users, {} groups, {} rules, {} unresolved, "
+              + "digest {}, {} ms",
           aclFile,
           policy.userRules().size(),
           policy.groupRules().size(),
           policy.ruleCount(),
+          policy.unresolvedPaths().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
     } catch (Exception e) {
@@ -97,6 +103,31 @@ public final class PolicyStore {
           aclFile,
           e);
     }
+  }
+
+  /**
+   * An exact rule omitted for a missing file must activate once that file appears, even though the
+   * ACL content — and therefore its digest — never changed. Only a full reparse canonicalizes the
+   * path and re-runs the policy checks, so the digest fast path must yield here.
+   *
+   * <p>The probe mirrors the loader's rule that absence alone is tolerable: it resolves each path
+   * exactly as the loader would, and only {@link NoSuchFileException} keeps the fast path. Any
+   * other I/O failure (an inaccessible parent, a symlink loop) forces the reparse, which then
+   * invalidates the policy — {@code Files.exists} would report all of those as "still missing" and
+   * silently keep serving a policy the loader would have rejected.
+   */
+  private static boolean anyUnresolvedPathResolvable(AclPolicy policy) {
+    for (Path unresolved : policy.unresolvedPaths()) {
+      try {
+        unresolved.toRealPath();
+        return true;
+      } catch (NoSuchFileException e) {
+        // Still absent: the omitted rule stays omitted, with no reparse and no ERROR churn.
+      } catch (IOException e) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static String sha256(byte[] content) throws Exception {

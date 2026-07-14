@@ -39,18 +39,15 @@ class AuthorizationSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/alice/*.conf'
+            - '%s/alice/*.conf'
         groups:
           data-eng:
-            allow:
-              - '%s/shared/*.properties'
+            - '%s/shared/*.properties'
           admins:
-            allow:
-              - '%s/admin/**'
+            - '%s/admin/**'
         """
             .formatted(root, root, root));
   }

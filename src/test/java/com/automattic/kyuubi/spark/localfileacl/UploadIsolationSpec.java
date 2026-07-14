@@ -37,11 +37,10 @@ class UploadIsolationSpec {
     TestSupport.writeAcl(
         aclFile,
         """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/**'
+            - '%s/**'
         """
             .formatted(root));
     engine = TestSupport.newEngine(aclFile, uploadRoot, user -> Set.of(), new MutableClock());

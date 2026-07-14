@@ -14,6 +14,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,11 +31,23 @@ class AclYamlLoaderSpec {
   void setUp() throws Exception {
     root = TestSupport.real(tempDir);
     uploadRoot = Files.createDirectories(root.resolve("upload"));
-    loader = new AclYamlLoader(uploadRoot, null);
+    loader = new AclYamlLoader(TestSupport.options(uploadRoot));
   }
 
   private AclPolicy parse(String yaml) {
     return loader.parse(yaml.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static AclPolicy parseWith(AclYamlLoader loader, String yaml) {
+    return loader.parse(yaml.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static String allowing(String... patterns) {
+    StringBuilder yaml = new StringBuilder("version: 2\nusers:\n  u:\n");
+    for (String pattern : patterns) {
+      yaml.append("    - '").append(pattern).append("'\n");
+    }
+    return yaml.toString();
   }
 
   @Test
@@ -43,16 +56,14 @@ class AclYamlLoaderSpec {
     AclPolicy policy =
         parse(
             """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/alice/*.conf'
+            - '%s/alice/*.conf'
         groups:
           data-eng:
-            allow:
-              - '%s/shared/**'
-              - '%s/exact.conf'
+            - '%s/shared/**'
+            - '%s/exact.conf'
         """
                 .formatted(root, root, root));
     assertEquals(1, policy.rulesForUser("alice").size());
@@ -68,16 +79,15 @@ class AclYamlLoaderSpec {
     AclPolicy policy =
         parse(
             """
-        version: 1
+        version: 2
         users:
           u:
-            allow:
-              - '%s/d/*.conf'
-              - '%s/d/**/deep.jar'
-              - '%s/d/runtime-?.properties'
-              - '%s/d/[ab].cfg'
-              - '%s/d/{one,two}.pem'
-              - '%s/d/exact.conf'
+            - '%s/d/*.conf'
+            - '%s/d/**/deep.jar'
+            - '%s/d/runtime-?.properties'
+            - '%s/d/[ab].cfg'
+            - '%s/d/{one,two}.pem'
+            - '%s/d/exact.conf'
         """
                 .formatted(root, root, root, root, root, root));
     List<CompiledRule> rules = policy.rulesForUser("u");
@@ -102,11 +112,10 @@ class AclYamlLoaderSpec {
     AclPolicy policy =
         parse(
             """
-        version: 1
+        version: 2
         users:
           u:
-            allow:
-              - '%s'
+            - '%s'
         """
                 .formatted(link));
     // The compiled rule points at the canonical target, matching canonicalized submissions.
@@ -119,11 +128,10 @@ class AclYamlLoaderSpec {
     AclPolicy policy =
         parse(
             """
-        version: 1
+        version: 2
         users:
           u:
-            allow:
-              - '%s/a.conf'
+            - '%s/a.conf'
         """
                 .formatted(root));
     assertThrows(UnsupportedOperationException.class, () -> policy.userRules().put("x", List.of()));
@@ -136,18 +144,33 @@ class AclYamlLoaderSpec {
   void rejectsMalformedYamlAndUnsupportedVersions() {
     assertThrows(IllegalArgumentException.class, () -> parse("just a string"));
     assertThrows(RuntimeException.class, () -> parse("{unclosed: ["));
-    assertThrows(IllegalArgumentException.class, () -> parse("version: 2\n"));
+    assertThrows(IllegalArgumentException.class, () -> parse("version: 3\n"));
     assertThrows(IllegalArgumentException.class, () -> parse("users: {}\n"));
-    assertThrows(IllegalArgumentException.class, () -> parse("version: 1\nunknown_section: {}\n"));
+    assertThrows(IllegalArgumentException.class, () -> parse("version: 2\nunknown_section: {}\n"));
+  }
+
+  @Test
+  void requiresEveryPrincipalToMapToAListOfPatterns() {
+    // A nested mapping, a bare string, and a non-string pattern are all rejected.
     assertThrows(
         IllegalArgumentException.class,
-        () -> parse("version: 1\nusers:\n  u:\n    deny:\n      - '/x'\n"));
+        () -> parse("version: 2\nusers:\n  u:\n    grant:\n      - '/x'\n"));
     assertThrows(
-        IllegalArgumentException.class,
-        () -> parse("version: 1\nusers:\n  u:\n    allow: '/not-a-list'\n"));
+        IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u: '/not-a-list'\n"));
     assertThrows(
-        IllegalArgumentException.class,
-        () -> parse("version: 1\nusers:\n  u:\n    allow:\n      - 42\n"));
+        IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u:\n    - 42\n"));
+
+    // A principal with no value at all is a typo, not a policy that grants nothing: it must be
+    // rejected rather than compiled into an empty rule list.
+    IllegalArgumentException e =
+        assertThrows(IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u:\n"));
+    assertTrue(e.getMessage().contains("users.u"), e.getMessage());
+    assertThrows(IllegalArgumentException.class, () -> parse("version: 2\ngroups:\n  data-eng:\n"));
+
+    // An intentionally empty allow list is written explicitly, and grants nothing.
+    AclPolicy policy = parse("version: 2\nusers:\n  u: []\n");
+    assertTrue(policy.rulesForUser("u").isEmpty());
+    assertEquals(0, policy.ruleCount());
   }
 
   @Test
@@ -169,37 +192,34 @@ class AclYamlLoaderSpec {
   }
 
   @Test
-  void rejectsDuplicateYamlKeys() throws Exception {
+  void rejectsDuplicatePrincipals() throws Exception {
     Files.writeString(root.resolve("a.conf"), "x");
-    // Duplicate principal: the second alice would silently replace the first.
+    // The second alice would silently replace the first, widening or narrowing her access
+    // depending on YAML ordering.
     assertThrows(
         RuntimeException.class,
         () ->
             parse(
                 """
-        version: 1
+        version: 2
         users:
           alice:
-            allow:
-              - '%s/a.conf'
+            - '%s/a.conf'
           alice:
-            allow:
-              - '%s/**'
+            - '%s/**'
         """
                     .formatted(root, root)));
-    // Duplicate 'allow' within one principal.
     assertThrows(
         RuntimeException.class,
         () ->
             parse(
                 """
-        version: 1
-        users:
-          alice:
-            allow:
-              - '%s/a.conf'
-            allow:
-              - '%s/**'
+        version: 2
+        groups:
+          data-eng:
+            - '%s/a.conf'
+          data-eng:
+            - '%s/**'
         """
                     .formatted(root, root)));
   }
@@ -219,7 +239,7 @@ class AclYamlLoaderSpec {
     assertThrows(Exception.class, () -> loader.readVerified(root.resolve("missing.yaml")));
 
     Path loose = root.resolve("loose.yaml");
-    Files.writeString(loose, "version: 1\n");
+    Files.writeString(loose, "version: 2\n");
     Files.setPosixFilePermissions(
         loose,
         EnumSet.of(
@@ -229,24 +249,28 @@ class AclYamlLoaderSpec {
     assertThrows(Exception.class, () -> loader.readVerified(loose));
 
     Path uploaded = uploadRoot.resolve("acl.yaml");
-    TestSupport.writeAcl(uploaded, "version: 1\n");
+    TestSupport.writeAcl(uploaded, "version: 2\n");
     assertThrows(Exception.class, () -> loader.readVerified(uploaded));
 
     Path good = root.resolve("good.yaml");
-    TestSupport.writeAcl(good, "version: 1\n");
-    assertEquals("version: 1\n", new String(loader.readVerified(good)));
+    TestSupport.writeAcl(good, "version: 2\n");
+    assertEquals("version: 2\n", new String(loader.readVerified(good)));
   }
 
   @Test
   void readVerifiedEnforcesExpectedOwnerAndSizeLimit() throws Exception {
     Path acl = root.resolve("owned.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
 
-    AclYamlLoader wrongOwner = new AclYamlLoader(uploadRoot, "definitely-not-this-user");
+    AclYamlLoader wrongOwner =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, "definitely-not-this-user", true, true));
     assertThrows(Exception.class, () -> wrongOwner.readVerified(acl));
 
-    AclYamlLoader rightOwner = new AclYamlLoader(uploadRoot, Files.getOwner(acl).getName());
-    assertEquals("version: 1\n", new String(rightOwner.readVerified(acl)));
+    AclYamlLoader rightOwner =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, Files.getOwner(acl).getName(), true, true));
+    assertEquals("version: 2\n", new String(rightOwner.readVerified(acl)));
 
     Path huge = root.resolve("huge.yaml");
     TestSupport.writeAcl(huge, "# padding\n".repeat(200_000));
@@ -256,13 +280,12 @@ class AclYamlLoaderSpec {
   @Test
   void readVerifiedRejectsFileChangingDuringRead() throws Exception {
     Path acl = root.resolve("growing.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     // The hook fires between the pre-read integrity check and the content read, so every
     // attempt observes a size/mtime mismatch and the read is never accepted.
     AclYamlLoader racingLoader =
         new AclYamlLoader(
-            uploadRoot,
-            null,
+            TestSupport.options(uploadRoot),
             () -> {
               try {
                 Files.writeString(acl, "# grew\n", StandardOpenOption.APPEND);
@@ -277,12 +300,11 @@ class AclYamlLoaderSpec {
   @Test
   void readVerifiedBoundsAllocationWhenFileGrowsPastTheCapDuringRead() throws Exception {
     Path acl = root.resolve("ballooning.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     byte[] filler = new byte[(int) AclYamlLoader.MAX_ACL_BYTES + 1024];
     AclYamlLoader racingLoader =
         new AclYamlLoader(
-            uploadRoot,
-            null,
+            TestSupport.options(uploadRoot),
             () -> {
               try {
                 Files.write(acl, filler, StandardOpenOption.APPEND);
@@ -300,7 +322,7 @@ class AclYamlLoaderSpec {
     Path grandParent = Files.createDirectory(root.resolve("grand"));
     Path parent = Files.createDirectory(grandParent.resolve("sub"));
     Path acl = parent.resolve("acl.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     // The immediate parent is tight, but a group-writable grandparent still allows an entry swap.
     Files.setPosixFilePermissions(
         grandParent,
@@ -316,15 +338,18 @@ class AclYamlLoaderSpec {
   @Test
   void readVerifiedRequiresTrustedOwnershipAlongTheAncestorChain() throws Exception {
     Path acl = root.resolve("chain.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     // The whole chain (user temp dirs plus root-owned system ancestors) must satisfy
     // "expected owner or root" — this walks all the way to /.
-    AclYamlLoader ownedLoader = new AclYamlLoader(uploadRoot, Files.getOwner(acl).getName(), null);
-    assertEquals("version: 1\n", new String(ownedLoader.readVerified(acl)));
+    AclYamlLoader ownedLoader =
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, Files.getOwner(acl).getName(), true, true), null);
+    assertEquals("version: 2\n", new String(ownedLoader.readVerified(acl)));
     // A chain containing directories owned by anyone else is rejected (here every user-owned
     // temp ancestor violates the expectation).
     AclYamlLoader distrustingLoader =
-        new AclYamlLoader(uploadRoot, "definitely-not-this-user", null);
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, "definitely-not-this-user", true, true), null);
     assertThrows(Exception.class, () -> distrustingLoader.readVerified(acl));
   }
 
@@ -332,13 +357,16 @@ class AclYamlLoaderSpec {
   void readVerifiedRejectsForeignOwnedAncestorEvenWhenTheFileOwnerIsCorrect() throws Exception {
     Path foreignDir = Files.createDirectory(root.resolve("foreign"));
     Path acl = foreignDir.resolve("acl.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     String me = Files.getOwner(acl).getName();
     // Injected owner lookup: the file (and every other ancestor) belongs to the expected owner,
     // but this one 0755-style directory is controlled by someone else — a directory-entry swap
     // vector that must be rejected with the ancestor-specific error.
     AclYamlLoader foreignAncestorLoader =
-        new AclYamlLoader(uploadRoot, me, null, path -> path.equals(foreignDir) ? "intruder" : me);
+        new AclYamlLoader(
+            new AclYamlLoader.Options(uploadRoot, me, true, true),
+            null,
+            path -> path.equals(foreignDir) ? "intruder" : me);
     IOException e = assertThrows(IOException.class, () -> foreignAncestorLoader.readVerified(acl));
     assertTrue(e.getMessage().contains("ancestor directory"), e.getMessage());
     assertTrue(e.getMessage().contains("intruder"), e.getMessage());
@@ -349,10 +377,10 @@ class AclYamlLoaderSpec {
     Path sticky = Files.createDirectory(root.resolve("sticky"));
     Path sub = Files.createDirectory(sticky.resolve("sub"));
     Path acl = sub.resolve("acl.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     // /tmp-style 1777: world-writable but sticky, so entries cannot be swapped by other users.
     Files.setAttribute(sticky, "unix:mode", 01777);
-    assertEquals("version: 1\n", new String(loader.readVerified(acl)));
+    assertEquals("version: 2\n", new String(loader.readVerified(acl)));
 
     // Without the sticky bit the same mode is rejected.
     Files.setAttribute(sticky, "unix:mode", 0777);
@@ -363,7 +391,7 @@ class AclYamlLoaderSpec {
   void readVerifiedRejectsLooseDirectoryPermissions() throws Exception {
     Path looseDir = Files.createDirectory(root.resolve("loose-dir"));
     Path acl = looseDir.resolve("acl.yaml");
-    TestSupport.writeAcl(acl, "version: 1\n");
+    TestSupport.writeAcl(acl, "version: 2\n");
     Files.setPosixFilePermissions(
         looseDir,
         EnumSet.of(
@@ -375,14 +403,79 @@ class AclYamlLoaderSpec {
     assertThrows(Exception.class, () -> loader.readVerified(acl));
   }
 
+  @Test
+  void rejectsWildcardPatternsWhenWildcardsAreDisabled() throws Exception {
+    Path exact = Files.writeString(root.resolve("exact.conf"), "x");
+    AclYamlLoader strict =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, false, true));
+
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class, () -> parseWith(strict, allowing(root + "/*.conf")));
+    assertTrue(e.getMessage().contains(PluginSettings.WILDCARDS_ENABLED_PROP), e.getMessage());
+    // No glob construct slips through, and none is silently reinterpreted as a literal filename.
+    for (String pattern :
+        List.of("/d/**", "/d/f?.conf", "/d/[ab].cfg", "/d/{one,two}.pem", "/d/*")) {
+      assertThrows(
+          IllegalArgumentException.class, () -> parseWith(strict, allowing(root + pattern)));
+    }
+    // Exact rules are unaffected.
+    AclPolicy policy = parseWith(strict, allowing(exact.toString()));
+    assertTrue(policy.rulesForUser("u").get(0).matches(exact));
+  }
+
+  @Test
+  void omitsMissingExactRulesWhenFailOnMissingFilesIsDisabled() throws Exception {
+    Path present = Files.writeString(root.resolve("present.conf"), "x");
+    Path missing = root.resolve("missing.conf");
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+
+    AclPolicy policy = parseWith(lenient, allowing(present.toString(), missing.toString()));
+
+    // The missing rule authorizes nothing, its valid sibling survives, and the path is carried
+    // in the snapshot so PolicyStore can reparse once the file appears.
+    List<CompiledRule> rules = policy.rulesForUser("u");
+    assertEquals(1, rules.size());
+    assertTrue(rules.get(0).matches(present));
+    assertEquals(Set.of(missing), policy.unresolvedPaths());
+  }
+
+  @Test
+  void invalidatesOnIoFailuresOtherThanAMissingFileEvenWhenLenient() throws Exception {
+    // A symlink loop resolves to a FileSystemException, not NoSuchFileException: it signals a
+    // broken policy rather than a file that has yet to be created, so it must still invalidate.
+    Path loop = root.resolve("loop-a.conf");
+    Path other = root.resolve("loop-b.conf");
+    Files.createSymbolicLink(loop, other);
+    Files.createSymbolicLink(other, loop);
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> parseWith(lenient, allowing(loop.toString())));
+  }
+
+  @Test
+  void rejectsUploadRootPatternsInLenientModeToo() {
+    AclYamlLoader lenient =
+        new AclYamlLoader(new AclYamlLoader.Options(uploadRoot, null, true, false));
+    // The upload-root check precedes canonicalization, so a nonexistent upload path is rejected
+    // rather than tolerated as "missing".
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> parseWith(lenient, allowing(uploadRoot + "/some-batch/file.jar")));
+    assertThrows(
+        IllegalArgumentException.class, () -> parseWith(lenient, allowing(uploadRoot + "/**")));
+  }
+
   private void parseSinglePattern(String pattern) {
     parse(
         """
-        version: 1
+        version: 2
         users:
           u:
-            allow:
-              - '%s'
+            - '%s'
         """
             .formatted(pattern));
   }

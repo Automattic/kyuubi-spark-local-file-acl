@@ -24,10 +24,24 @@ final class TestSupport {
     Files.setPosixFilePermissions(file, OWNER_ONLY);
   }
 
+  /**
+   * Options for the suite's glob-heavy fixtures, which opt into wildcard matching explicitly. The
+   * production defaults (wildcards off, fail on missing files) are covered by {@link
+   * PluginSettingsSpec} and {@link AclYamlLoaderSpec}.
+   */
+  static AclYamlLoader.Options options(Path uploadRoot) {
+    return new AclYamlLoader.Options(uploadRoot, null, true, true);
+  }
+
   static PolicyStore newLoadedStore(
       Path aclFile, Path uploadRoot, Duration interval, MutableClock clock) {
+    return newLoadedStore(aclFile, options(uploadRoot), interval, clock);
+  }
+
+  static PolicyStore newLoadedStore(
+      Path aclFile, AclYamlLoader.Options options, Duration interval, MutableClock clock) {
     PolicyStore store =
-        new PolicyStore(aclFile, new AclYamlLoader(uploadRoot, null), interval, clock::nanos);
+        new PolicyStore(aclFile, new AclYamlLoader(options), interval, clock::nanos);
     store.initialLoad();
     return store;
   }

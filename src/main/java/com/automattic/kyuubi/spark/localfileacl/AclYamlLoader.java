@@ -6,15 +6,20 @@ import java.io.UncheckedIOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -25,7 +30,9 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  */
 public final class AclYamlLoader {
 
-  private static final int SUPPORTED_VERSION = 1;
+  private static final Logger LOG = LoggerFactory.getLogger(AclYamlLoader.class);
+
+  private static final int SUPPORTED_VERSION = 2;
   private static final String GLOB_META_CHARS = "*?[]{}";
   private static final Set<String> TOP_LEVEL_KEYS = Set.of("version", "users", "groups");
 
@@ -34,8 +41,21 @@ public final class AclYamlLoader {
 
   private static final int READ_RETRIES = 3;
 
-  private final Path uploadRoot;
-  private final String expectedOwner;
+  /**
+   * @param uploadRoot canonicalized Kyuubi shared upload root
+   * @param expectedOwner required owner of the ACL file and its ancestor directories, or null to
+   *     skip the ownership checks
+   * @param wildcardsEnabled whether glob patterns may appear in ACL entries
+   * @param failOnMissingFiles whether an exact rule naming a nonexistent file invalidates the
+   *     policy; when false the rule is logged at ERROR and omitted
+   */
+  public record Options(
+      Path uploadRoot,
+      String expectedOwner,
+      boolean wildcardsEnabled,
+      boolean failOnMissingFiles) {}
+
+  private final Options options;
 
   /** Test seam: runs between the pre-read integrity check and the content read. */
   private final Runnable preReadHook;
@@ -43,26 +63,16 @@ public final class AclYamlLoader {
   /** Test seam: resolves the owning OS user of a path. */
   private final Function<Path, String> ownerLookup;
 
-  /**
-   * @param uploadRoot canonicalized Kyuubi shared upload root
-   * @param expectedOwner required owner of the ACL file and its ancestor directories, or null to
-   *     skip the ownership checks
-   */
-  public AclYamlLoader(Path uploadRoot, String expectedOwner) {
-    this(uploadRoot, expectedOwner, null, AclYamlLoader::systemOwner);
+  public AclYamlLoader(Options options) {
+    this(options, null, AclYamlLoader::systemOwner);
   }
 
-  AclYamlLoader(Path uploadRoot, String expectedOwner, Runnable preReadHook) {
-    this(uploadRoot, expectedOwner, preReadHook, AclYamlLoader::systemOwner);
+  AclYamlLoader(Options options, Runnable preReadHook) {
+    this(options, preReadHook, AclYamlLoader::systemOwner);
   }
 
-  AclYamlLoader(
-      Path uploadRoot,
-      String expectedOwner,
-      Runnable preReadHook,
-      Function<Path, String> ownerLookup) {
-    this.uploadRoot = uploadRoot;
-    this.expectedOwner = expectedOwner;
+  AclYamlLoader(Options options, Runnable preReadHook, Function<Path, String> ownerLookup) {
+    this.options = options;
     this.preReadHook = preReadHook;
     this.ownerLookup = ownerLookup;
   }
@@ -129,9 +139,10 @@ public final class AclYamlLoader {
     if (attributes.size() > MAX_ACL_BYTES) {
       throw new IOException("ACL file exceeds the " + MAX_ACL_BYTES + " byte limit: " + realFile);
     }
-    if (realFile.startsWith(uploadRoot)) {
+    if (realFile.startsWith(options.uploadRoot())) {
       throw new IOException("ACL file must not live beneath the Kyuubi upload root: " + realFile);
     }
+    String expectedOwner = options.expectedOwner();
     if (expectedOwner != null) {
       String owner = ownerLookup.apply(realFile);
       if (!expectedOwner.equals(owner)) {
@@ -199,12 +210,17 @@ public final class AclYamlLoader {
           "Unsupported ACL version '" + version + "'; expected " + SUPPORTED_VERSION);
     }
 
+    // Exact rules whose file is missing are omitted in lenient mode; the policy carries their
+    // paths so PolicyStore can reparse (and canonicalize) once such a file appears.
+    Set<Path> unresolved = new LinkedHashSet<>();
     return new AclPolicy(
-        parsePrincipals(rootMap.get("users"), "users"),
-        parsePrincipals(rootMap.get("groups"), "groups"));
+        parsePrincipals(rootMap.get("users"), "users", unresolved),
+        parsePrincipals(rootMap.get("groups"), "groups", unresolved),
+        unresolved);
   }
 
-  private Map<String, List<CompiledRule>> parsePrincipals(Object section, String sectionName) {
+  private Map<String, List<CompiledRule>> parsePrincipals(
+      Object section, String sectionName, Set<Path> unresolved) {
     Map<String, List<CompiledRule>> compiled = new LinkedHashMap<>();
     if (section == null) {
       return compiled;
@@ -215,43 +231,35 @@ public final class AclYamlLoader {
           if (principal == null || principal.isBlank()) {
             throw new IllegalArgumentException("Blank principal name in '" + sectionName + "'");
           }
-          Map<String, Object> entry = asMap(body, sectionName + "." + principal);
-          for (String key : entry.keySet()) {
-            if (!"allow".equals(key)) {
-              throw new IllegalArgumentException(
-                  "Unknown key '"
-                      + key
-                      + "' under "
-                      + sectionName
-                      + "."
-                      + principal
-                      + "; only 'allow' is supported");
-            }
-          }
-          compiled.put(
-              principal, compilePatterns(entry.get("allow"), sectionName + "." + principal));
+          compiled.put(principal, compilePatterns(body, sectionName + "." + principal, unresolved));
         });
     return compiled;
   }
 
-  private List<CompiledRule> compilePatterns(Object allow, String owner) {
-    if (allow == null) {
-      return List.of();
-    }
+  /**
+   * A principal maps straight to its patterns: allow rules are the only kind of rule. An empty
+   * allow list must be written explicitly ({@code alice: []}); a principal with no value at all is
+   * a typo, not a policy, so it is rejected rather than read as "grants nothing".
+   */
+  private List<CompiledRule> compilePatterns(Object allow, String owner, Set<Path> unresolved) {
     if (!(allow instanceof List<?> patterns)) {
-      throw new IllegalArgumentException("'allow' under " + owner + " must be a list of patterns");
+      throw new IllegalArgumentException(owner + " must map to a list of patterns");
     }
     List<CompiledRule> rules = new ArrayList<>();
     for (Object patternObject : patterns) {
       if (!(patternObject instanceof String pattern) || pattern.isBlank()) {
         throw new IllegalArgumentException("Non-string or blank pattern under " + owner);
       }
-      rules.add(compilePattern(pattern.strip(), owner));
+      compilePattern(pattern.strip(), owner, unresolved).ifPresent(rules::add);
     }
     return rules;
   }
 
-  private CompiledRule compilePattern(String pattern, String owner) {
+  /**
+   * Empty when the rule is omitted: a missing exact file while {@code failOnMissingFiles} is off.
+   */
+  private Optional<CompiledRule> compilePattern(
+      String pattern, String owner, Set<Path> unresolved) {
     if (pattern.matches("^[A-Za-z][A-Za-z0-9+.\\-]*:.*")) {
       throw new IllegalArgumentException(
           "Pattern '"
@@ -271,6 +279,16 @@ public final class AclYamlLoader {
       }
     }
     if (containsGlobMeta(pattern)) {
+      if (!options.wildcardsEnabled()) {
+        throw new IllegalArgumentException(
+            "Pattern '"
+                + pattern
+                + "' under "
+                + owner
+                + " uses wildcard matching, which is disabled; set -D"
+                + PluginSettings.WILDCARDS_ENABLED_PROP
+                + "=true to enable it");
+      }
       rejectUploadRootTarget(literalDirPrefix(pattern), pattern, owner);
       PathMatcher matcher;
       try {
@@ -279,25 +297,44 @@ public final class AclYamlLoader {
         throw new IllegalArgumentException(
             "Invalid glob pattern '" + pattern + "' under " + owner + ": " + e.getMessage(), e);
       }
-      return new CompiledRule.Glob(pattern, matcher);
+      return Optional.of(new CompiledRule.Glob(pattern, matcher));
     }
     Path patternPath = Path.of(pattern);
-    rejectUploadRootTarget(patternPath.normalize(), pattern, owner);
+    Path normalized = patternPath.normalize();
+    rejectUploadRootTarget(normalized, pattern, owner);
     Path canonical;
     try {
       canonical = patternPath.toRealPath();
+    } catch (NoSuchFileException e) {
+      // Only a genuinely absent file is tolerable. Permission failures, symlink loops, and every
+      // other I/O error still invalidate the policy, in both modes.
+      if (options.failOnMissingFiles()) {
+        throw missingExactFile(pattern, owner, e);
+      }
+      LOG.error(
+          "Exact pattern '{}' under {} does not resolve to an existing file; the rule is omitted "
+              + "from the active policy and authorizes nothing until the file appears",
+          pattern,
+          owner);
+      unresolved.add(normalized);
+      return Optional.empty();
     } catch (IOException e) {
-      throw new IllegalArgumentException(
-          "Exact pattern '"
-              + pattern
-              + "' under "
-              + owner
-              + " does not resolve to an existing file: "
-              + e.getMessage(),
-          e);
+      throw missingExactFile(pattern, owner, e);
     }
     rejectUploadRootTarget(canonical, pattern, owner);
-    return new CompiledRule.Exact(pattern, canonical);
+    return Optional.of(new CompiledRule.Exact(pattern, canonical));
+  }
+
+  private static IllegalArgumentException missingExactFile(
+      String pattern, String owner, IOException cause) {
+    return new IllegalArgumentException(
+        "Exact pattern '"
+            + pattern
+            + "' under "
+            + owner
+            + " does not resolve to an existing file: "
+            + cause.getMessage(),
+        cause);
   }
 
   @SuppressWarnings("unchecked")
@@ -348,14 +385,14 @@ public final class AclYamlLoader {
   }
 
   private void rejectUploadRootTarget(Path target, String pattern, String owner) {
-    if (target.startsWith(uploadRoot)) {
+    if (target.startsWith(options.uploadRoot())) {
       throw new IllegalArgumentException(
           "Pattern '"
               + pattern
               + "' under "
               + owner
               + " targets the Kyuubi upload root "
-              + uploadRoot);
+              + options.uploadRoot());
     }
   }
 }
