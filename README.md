@@ -76,10 +76,15 @@ cardinalities, conflicting duplicates, and exclusions that match nothing fail pl
 initialization (and therefore server session handling) at startup. These settings are
 startup-only — they are not part of YAML hot reload.
 
-**Upgrading from 1.0.x:** wildcard matching used to be unconditional and is now off by default. A
-deployment whose ACL uses glob patterns must set
-`-Dkyuubi.local.file.acl.wildcards.enabled=true`, or plugin initialization fails and the server
-rejects every session carrying a policed key. The ACL schema is also now `version: 2` (see below).
+**Upgrading from 1.0.x to 2.0.0** — two breaking changes, both of which fail loudly at startup
+rather than silently weakening enforcement:
+
+- Wildcard matching used to be unconditional and is now off by default. A deployment whose ACL uses
+  glob patterns must set `-Dkyuubi.local.file.acl.wildcards.enabled=true`.
+- The ACL schema is `version: 2`: each principal maps straight to its list of patterns (see below).
+
+Either one left unaddressed fails plugin initialization, and the server then rejects every session
+carrying a policed key.
 
 ## ACL file
 
