@@ -6,7 +6,7 @@
 
     <groupId>com.automattic</groupId>
     <artifactId>kyuubi-spark-local-file-acl</artifactId>
-    <version>1.0.1-SNAPSHOT</version>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
 
     <name>Kyuubi Spark Local File ACL Plugin</name>
