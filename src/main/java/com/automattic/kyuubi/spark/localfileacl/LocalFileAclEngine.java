@@ -76,6 +76,10 @@ public final class LocalFileAclEngine {
       GroupLookup groups) {
     Path path = local.realPath();
 
+    // The upload exemption is evaluated before (and independently of) the ACL state: it covers
+    // only files this batch itself staged, canonically confined to its own upload directory,
+    // and never consults ACL rules — so an invalid policy does not fail batches that reference
+    // nothing but their own uploads.
     if (path.startsWith(uploadRoot)) {
       if (batchUploadDir.isPresent() && path.startsWith(batchUploadDir.get())) {
         LOG.info("Local file access granted: user={}, key={}, path={}, reason=upload-exemption, "

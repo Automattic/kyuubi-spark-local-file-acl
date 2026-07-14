@@ -35,7 +35,8 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
           settings.rulesFile(),
           new AclYamlLoader(uploadRoot, settings.expectedOwner()),
           settings.reloadInterval(),
-          Clock.systemUTC());
+          Clock.systemUTC(),
+          System::nanoTime);
       store.initialLoad();
       this.engine =
           new LocalFileAclEngine(policedKeys, store, new HadoopGroupResolver(), uploadRoot);

@@ -24,19 +24,28 @@ public final class PolicyStore {
   private final Path aclFile;
   private final AclYamlLoader loader;
   private final Duration reloadInterval;
+  /** Audit timestamps only; reload scheduling uses the monotonic ticker below. */
   private final Clock clock;
+  /** Monotonic nanosecond source, so a backward wall-clock step cannot delay revocation. */
+  private final java.util.function.LongSupplier ticker;
 
   private final AtomicReference<AclState> state = new AtomicReference<>();
   private final ReentrantLock reloadLock = new ReentrantLock();
-  private volatile Instant nextCheckAt;
+  private volatile long nextCheckAtNanos;
   private volatile String lastDigest;
 
-  public PolicyStore(Path aclFile, AclYamlLoader loader, Duration reloadInterval, Clock clock) {
+  public PolicyStore(
+      Path aclFile,
+      AclYamlLoader loader,
+      Duration reloadInterval,
+      Clock clock,
+      java.util.function.LongSupplier ticker) {
     this.aclFile = aclFile;
     this.loader = loader;
     this.reloadInterval = reloadInterval;
     this.clock = clock;
-    this.nextCheckAt = clock.instant().plus(reloadInterval);
+    this.ticker = ticker;
+    this.nextCheckAtNanos = ticker.getAsLong() + reloadInterval.toNanos();
   }
 
   /** Loads the initial policy; throws if it is invalid so plugin initialization fails. */
@@ -53,7 +62,7 @@ public final class PolicyStore {
 
   /** Non-blocking: at most one request thread performs the reload once the interval elapses. */
   public void maybeReload() {
-    if (clock.instant().isBefore(nextCheckAt)) {
+    if (ticker.getAsLong() - nextCheckAtNanos < 0) {
       return;
     }
     if (!reloadLock.tryLock()) {
@@ -61,11 +70,11 @@ public final class PolicyStore {
       return;
     }
     try {
-      if (clock.instant().isBefore(nextCheckAt)) {
+      if (ticker.getAsLong() - nextCheckAtNanos < 0) {
         return;
       }
       reloadNow();
-      nextCheckAt = clock.instant().plus(reloadInterval);
+      nextCheckAtNanos = ticker.getAsLong() + reloadInterval.toNanos();
     } finally {
       reloadLock.unlock();
     }
