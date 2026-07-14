@@ -21,9 +21,11 @@ class HadoopGroupResolverSpec {
     UserGroupInformation.reset();
     Configuration conf = new Configuration();
     conf.set("hadoop.security.group.mapping", StaticTestGroupsMapping.class.getName());
-    UserGroupInformation.setConfiguration(conf);
-    // Replace the JVM-wide Groups singleton so createRemoteUser uses the static mapping.
+    // Replace the JVM-wide Groups singleton BEFORE setConfiguration: UGI.initialize captures
+    // Groups.getUserToGroupsMappingService(conf), which returns the existing singleton if any
+    // other spec already created it with the default shell mapping.
     Groups.getUserToGroupsMappingServiceWithLoadedConfiguration(conf);
+    UserGroupInformation.setConfiguration(conf);
   }
 
   @Test
