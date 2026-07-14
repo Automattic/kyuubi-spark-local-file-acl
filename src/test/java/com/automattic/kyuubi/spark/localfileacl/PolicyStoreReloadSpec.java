@@ -19,7 +19,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
-
 import org.apache.kyuubi.KyuubiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,8 +28,7 @@ class PolicyStoreReloadSpec {
 
   private static final Duration INTERVAL = Duration.ofSeconds(60);
 
-  @TempDir
-  Path tempDir;
+  @TempDir Path tempDir;
 
   private Path root;
   private Path uploadRoot;
@@ -57,7 +55,8 @@ class PolicyStoreReloadSpec {
           alice:
             allow:
               - '%s'
-        """.formatted(path);
+        """
+        .formatted(path);
   }
 
   private PolicyStore newStore() {
@@ -91,7 +90,8 @@ class PolicyStoreReloadSpec {
 
     tickPastInterval();
     engine.validate("alice", Map.of("spark.files", fileB.toString()));
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
   }
 
@@ -126,7 +126,8 @@ class PolicyStoreReloadSpec {
     assertNotEquals(initialDigest, after.digest());
     LocalFileAclEngine engine = engineOn(store);
     engine.validate("alice", Map.of("spark.files", fileB.toString()));
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
   }
 
@@ -140,8 +141,10 @@ class PolicyStoreReloadSpec {
     store.maybeReload();
     assertInstanceOf(AclState.Invalid.class, store.current());
 
-    KyuubiException e = assertThrows(KyuubiException.class,
-        () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
+    KyuubiException e =
+        assertThrows(
+            KyuubiException.class,
+            () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
     assertTrue(e.getMessage().contains("invalid"));
 
     // Submissions without policed keys or with remote-only resources stay unaffected.
@@ -163,7 +166,8 @@ class PolicyStoreReloadSpec {
     store.maybeReload();
 
     engine.validate("alice", Map.of("spark.files", fileB.toString()));
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
   }
 
@@ -183,7 +187,8 @@ class PolicyStoreReloadSpec {
     // reference only their own uploads...
     engine.validate("alice", TestSupport.uploadedConf(batchId, staged.toString()));
     // ...while ACL-authorized local resources are still rejected.
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> engine.validate("alice", Map.of("spark.files", fileA.toString())));
   }
 
@@ -197,10 +202,12 @@ class PolicyStoreReloadSpec {
     assertInstanceOf(AclState.Invalid.class, store.current());
 
     TestSupport.writeAcl(aclFile, allowOnly(fileA));
-    Files.setPosixFilePermissions(aclFile, Set.of(
-        PosixFilePermission.OWNER_READ,
-        PosixFilePermission.OWNER_WRITE,
-        PosixFilePermission.OTHERS_WRITE));
+    Files.setPosixFilePermissions(
+        aclFile,
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.OTHERS_WRITE));
     tickPastInterval();
     store.maybeReload();
     assertInstanceOf(AclState.Invalid.class, store.current());
@@ -236,32 +243,38 @@ class PolicyStoreReloadSpec {
   @Test
   void submissionIsAuthorizedAgainstOneSnapshotEvenWhenReloadedMidValidation() throws Exception {
     // v1 grants bob's group both files.
-    TestSupport.writeAcl(aclFile, """
+    TestSupport.writeAcl(
+        aclFile,
+        """
         version: 1
         groups:
           g:
             allow:
               - '%s'
               - '%s'
-        """.formatted(fileA, fileB));
+        """
+            .formatted(fileA, fileB));
     PolicyStore store = newStore();
     // Group resolution runs while the first resource is being authorized — after the engine
     // captured its snapshot. Swap in a policy that grants nothing and force a reload.
-    GroupResolver swappingResolver = user -> {
-      TestSupport.writeAcl(aclFile, "version: 1\n");
-      tickPastInterval();
-      store.maybeReload();
-      return Set.of("g");
-    };
-    LocalFileAclEngine engine = new LocalFileAclEngine(
-        PolicedKeys.fromSettings(null, null), store, swappingResolver, uploadRoot);
+    GroupResolver swappingResolver =
+        user -> {
+          TestSupport.writeAcl(aclFile, "version: 1\n");
+          tickPastInterval();
+          store.maybeReload();
+          return Set.of("g");
+        };
+    LocalFileAclEngine engine =
+        new LocalFileAclEngine(
+            PolicedKeys.fromSettings(null, null), store, swappingResolver, uploadRoot);
 
     // Both entries pass because the whole submission is judged by the captured v1 snapshot,
     // never half by v1 and half by the revoked policy.
     engine.validate("bob", Map.of("spark.files", fileA + "," + fileB));
 
     // The revocation took effect for subsequent submissions.
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> engine.validate("bob", Map.of("spark.files", fileA.toString())));
   }
 
@@ -274,24 +287,27 @@ class PolicyStoreReloadSpec {
     AtomicReference<Throwable> failure = new AtomicReference<>();
     List<Thread> threads = new ArrayList<>();
     for (int i = 0; i < readers; i++) {
-      Thread thread = new Thread(() -> {
-        try {
-          start.await();
-          for (int n = 0; n < 500; n++) {
-            AclState state = store.current();
-            if (state instanceof AclState.Valid valid) {
-              // A published snapshot is always fully compiled.
-              assertEquals(1, valid.policy().ruleCount());
-              assertTrue(valid.policy().rulesForUser("alice").get(0)
-                  .matches(fileA) || valid.policy().rulesForUser("alice").get(0).matches(fileB));
-            }
-          }
-        } catch (Throwable t) {
-          failure.set(t);
-        } finally {
-          done.countDown();
-        }
-      });
+      Thread thread =
+          new Thread(
+              () -> {
+                try {
+                  start.await();
+                  for (int n = 0; n < 500; n++) {
+                    AclState state = store.current();
+                    if (state instanceof AclState.Valid valid) {
+                      // A published snapshot is always fully compiled.
+                      assertEquals(1, valid.policy().ruleCount());
+                      assertTrue(
+                          valid.policy().rulesForUser("alice").get(0).matches(fileA)
+                              || valid.policy().rulesForUser("alice").get(0).matches(fileB));
+                    }
+                  }
+                } catch (Throwable t) {
+                  failure.set(t);
+                } finally {
+                  done.countDown();
+                }
+              });
       threads.add(thread);
       thread.start();
     }

@@ -32,8 +32,7 @@ public record PluginSettings(
 
   public static PluginSettings fromSystemProperties() {
     Path rulesFile = resolveRulesFile();
-    Duration reloadInterval = Duration.parse(
-        System.getProperty(RELOAD_INTERVAL_PROP, "PT60S"));
+    Duration reloadInterval = Duration.parse(System.getProperty(RELOAD_INTERVAL_PROP, "PT60S"));
     Path uploadRoot = resolveUploadRoot();
     String expectedOwner = System.getProperty(EXPECTED_OWNER_PROP);
     return new PluginSettings(
@@ -54,13 +53,15 @@ public record PluginSettings(
     if (confDir != null && !confDir.isBlank()) {
       return Path.of(confDir, DEFAULT_RULES_FILE_NAME);
     }
-    throw new IllegalArgumentException("ACL rules file location is not configured; set -D"
-        + RULES_FILE_PROP + " or the KYUUBI_CONF_DIR environment variable");
+    throw new IllegalArgumentException(
+        "ACL rules file location is not configured; set -D"
+            + RULES_FILE_PROP
+            + " or the KYUUBI_CONF_DIR environment variable");
   }
 
   /**
-   * Mirrors Kyuubi's {@code KyuubiApplicationManager.uploadWorkDir} resolution:
-   * {@code $KYUUBI_WORK_DIR_ROOT/upload}, falling back to {@code ${user.dir}/upload}.
+   * Mirrors Kyuubi's {@code KyuubiApplicationManager.uploadWorkDir} resolution: {@code
+   * $KYUUBI_WORK_DIR_ROOT/upload}, falling back to {@code ${user.dir}/upload}.
    */
   private static Path resolveUploadRoot() {
     String configured = System.getProperty(UPLOAD_ROOT_PROP);

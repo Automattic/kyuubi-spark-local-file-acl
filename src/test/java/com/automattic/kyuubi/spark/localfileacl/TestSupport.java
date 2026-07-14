@@ -7,7 +7,6 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.Groups;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -27,8 +26,8 @@ final class TestSupport {
 
   static PolicyStore newLoadedStore(
       Path aclFile, Path uploadRoot, Duration interval, MutableClock clock) {
-    PolicyStore store = new PolicyStore(
-        aclFile, new AclYamlLoader(uploadRoot, null), interval, clock::nanos);
+    PolicyStore store =
+        new PolicyStore(aclFile, new AclYamlLoader(uploadRoot, null), interval, clock::nanos);
     store.initialLoad();
     return store;
   }
@@ -60,10 +59,10 @@ final class TestSupport {
   }
 
   /**
-   * Installs a Hadoop group mapping JVM-wide. The Groups singleton must be replaced BEFORE
-   * {@code setConfiguration}: UGI initialization captures
-   * {@code Groups.getUserToGroupsMappingService(conf)}, which returns the existing singleton if
-   * any earlier spec already created one.
+   * Installs a Hadoop group mapping JVM-wide. The Groups singleton must be replaced BEFORE {@code
+   * setConfiguration}: UGI initialization captures {@code
+   * Groups.getUserToGroupsMappingService(conf)}, which returns the existing singleton if any
+   * earlier spec already created one.
    */
   static void installHadoopGroupMapping(Configuration conf) {
     UserGroupInformation.reset();

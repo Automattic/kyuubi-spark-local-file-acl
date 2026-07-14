@@ -1,14 +1,12 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /** Immutable compiled ACL snapshot: allow rules per username and per Hadoop group. */
 public record AclPolicy(
-    Map<String, List<CompiledRule>> userRules,
-    Map<String, List<CompiledRule>> groupRules) {
+    Map<String, List<CompiledRule>> userRules, Map<String, List<CompiledRule>> groupRules) {
 
   public AclPolicy {
     userRules = deepCopy(userRules);
@@ -18,7 +16,7 @@ public record AclPolicy(
   private static Map<String, List<CompiledRule>> deepCopy(Map<String, List<CompiledRule>> rules) {
     Map<String, List<CompiledRule>> copy = new LinkedHashMap<>();
     rules.forEach((principal, principalRules) -> copy.put(principal, List.copyOf(principalRules)));
-    return Collections.unmodifiableMap(copy);
+    return Map.copyOf(copy);
   }
 
   public List<CompiledRule> rulesForUser(String user) {

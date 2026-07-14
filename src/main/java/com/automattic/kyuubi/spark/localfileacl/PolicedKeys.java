@@ -8,9 +8,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The effective set of policed Spark configuration keys and their cardinalities:
- * {@code (defaults ∪ extra keys) - excluded keys}, all normalized with the same rules Kyuubi's
- * {@code SparkProcessBuilder.convertConfigKey} applies when assembling the spark-submit command.
+ * The effective set of policed Spark configuration keys and their cardinalities: {@code (defaults ∪
+ * extra keys) - excluded keys}, all normalized with the same rules Kyuubi's {@code
+ * SparkProcessBuilder.convertConfigKey} applies when assembling the spark-submit command.
  */
 public final class PolicedKeys {
 
@@ -57,20 +57,31 @@ public final class PolicedKeys {
   public static PolicedKeys fromSettings(String extraKeysSpec, String excludedKeysSpec) {
     Map<String, Cardinality> effective = new LinkedHashMap<>(DEFAULTS);
 
-    parseExtraKeys(extraKeysSpec).forEach((key, cardinality) -> {
-      Cardinality existing = effective.get(key);
-      if (existing != null && existing != cardinality) {
-        throw new IllegalArgumentException("Conflicting definitions for policed key '" + key
-            + "': " + existing + " vs " + cardinality);
-      }
-      effective.put(key, cardinality);
-    });
+    parseExtraKeys(extraKeysSpec)
+        .forEach(
+            (key, cardinality) -> {
+              Cardinality existing = effective.get(key);
+              if (existing != null && existing != cardinality) {
+                throw new IllegalArgumentException(
+                    "Conflicting definitions for policed key '"
+                        + key
+                        + "': "
+                        + existing
+                        + " vs "
+                        + cardinality);
+              }
+              effective.put(key, cardinality);
+            });
 
     for (String excluded : splitSpec(excludedKeysSpec)) {
       String normalized = normalizeKey(excluded);
       if (effective.remove(normalized) == null) {
-        throw new IllegalArgumentException("Excluded key '" + excluded + "' (normalized '"
-            + normalized + "') does not match any default or extra policed key");
+        throw new IllegalArgumentException(
+            "Excluded key '"
+                + excluded
+                + "' (normalized '"
+                + normalized
+                + "') does not match any default or extra policed key");
       }
     }
     return new PolicedKeys(effective);
@@ -81,12 +92,13 @@ public final class PolicedKeys {
     for (String entry : splitSpec(extraKeysSpec)) {
       String[] parts = entry.split(":", -1);
       if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
-        throw new IllegalArgumentException("Malformed extra key entry '" + entry
-            + "'; expected '<key>:list' or '<key>:scalar'");
+        throw new IllegalArgumentException(
+            "Malformed extra key entry '" + entry + "'; expected '<key>:list' or '<key>:scalar'");
       }
       String normalized = normalizeKey(parts[0].strip());
       if (extras.containsKey(normalized)) {
-        throw new IllegalArgumentException("Duplicate extra key definition for '" + normalized + "'");
+        throw new IllegalArgumentException(
+            "Duplicate extra key definition for '" + normalized + "'");
       }
       extras.put(normalized, Cardinality.parse(parts[1]));
     }
