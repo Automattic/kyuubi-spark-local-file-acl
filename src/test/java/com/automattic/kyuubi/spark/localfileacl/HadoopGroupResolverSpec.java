@@ -8,6 +8,7 @@ import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.Groups;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,15 @@ class HadoopGroupResolverSpec {
     // Replace the JVM-wide Groups singleton BEFORE setConfiguration: UGI.initialize captures
     // Groups.getUserToGroupsMappingService(conf), which returns the existing singleton if any
     // other spec already created it with the default shell mapping.
+    Groups.getUserToGroupsMappingServiceWithLoadedConfiguration(conf);
+    UserGroupInformation.setConfiguration(conf);
+  }
+
+  @AfterAll
+  static void restoreHadoopDefaults() {
+    // Undo the JVM-wide UGI/Groups changes so later specs are not served synthetic groups.
+    UserGroupInformation.reset();
+    Configuration conf = new Configuration();
     Groups.getUserToGroupsMappingServiceWithLoadedConfiguration(conf);
     UserGroupInformation.setConfiguration(conf);
   }

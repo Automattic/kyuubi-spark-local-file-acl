@@ -156,9 +156,9 @@ public final class AclYamlLoader {
     }
     boolean groupOrWorldWritable = (mode & 0022) != 0;
     // A sticky directory (like /tmp, mode 1777) restricts rename/delete of entries to their
-    // owners, so it does not enable the directory-entry swap this check defends against.
-    boolean stickyDirectory =
-        (mode & 01000) != 0 && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS);
+    // owners, so it does not enable the directory-entry swap this check defends against. The
+    // file-type bits come from the same mode snapshot to avoid a second racy stat.
+    boolean stickyDirectory = (mode & 01000) != 0 && (mode & 0170000) == 0040000;
     if (groupOrWorldWritable && !stickyDirectory) {
       throw new IOException(what + " must not be group- or world-writable: " + path);
     }
