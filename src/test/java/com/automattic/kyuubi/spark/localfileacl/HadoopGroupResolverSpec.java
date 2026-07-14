@@ -15,6 +15,10 @@ class HadoopGroupResolverSpec {
 
   @BeforeAll
   static void configureStaticGroupMapping() {
+    // Other specs exercise the real HadoopGroupResolver first (class order is OS-dependent),
+    // which initializes UGI's static Groups machinery with the default shell mapping. Reset it
+    // so the static test mapping below takes effect regardless of execution order.
+    UserGroupInformation.reset();
     Configuration conf = new Configuration();
     conf.set("hadoop.security.group.mapping", StaticTestGroupsMapping.class.getName());
     UserGroupInformation.setConfiguration(conf);
