@@ -144,20 +144,33 @@ class AclYamlLoaderSpec {
   void rejectsMalformedYamlAndUnsupportedVersions() {
     assertThrows(IllegalArgumentException.class, () -> parse("just a string"));
     assertThrows(RuntimeException.class, () -> parse("{unclosed: ["));
-    // Version 1 was the pre-release schema, where every principal nested its patterns under an
-    // 'allow' key; version 3 does not exist yet.
-    assertThrows(IllegalArgumentException.class, () -> parse("version: 1\n"));
     assertThrows(IllegalArgumentException.class, () -> parse("version: 3\n"));
     assertThrows(IllegalArgumentException.class, () -> parse("users: {}\n"));
     assertThrows(IllegalArgumentException.class, () -> parse("version: 2\nunknown_section: {}\n"));
-    // A principal maps to a list of patterns, not to a mapping or a bare string.
+  }
+
+  @Test
+  void requiresEveryPrincipalToMapToAListOfPatterns() {
+    // A nested mapping, a bare string, and a non-string pattern are all rejected.
     assertThrows(
         IllegalArgumentException.class,
-        () -> parse("version: 2\nusers:\n  u:\n    allow:\n      - '/x'\n"));
+        () -> parse("version: 2\nusers:\n  u:\n    grant:\n      - '/x'\n"));
     assertThrows(
         IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u: '/not-a-list'\n"));
     assertThrows(
         IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u:\n    - 42\n"));
+
+    // A principal with no value at all is a typo, not a policy that grants nothing: it must be
+    // rejected rather than compiled into an empty rule list.
+    IllegalArgumentException e =
+        assertThrows(IllegalArgumentException.class, () -> parse("version: 2\nusers:\n  u:\n"));
+    assertTrue(e.getMessage().contains("users.u"), e.getMessage());
+    assertThrows(IllegalArgumentException.class, () -> parse("version: 2\ngroups:\n  data-eng:\n"));
+
+    // An intentionally empty allow list is written explicitly, and grants nothing.
+    AclPolicy policy = parse("version: 2\nusers:\n  u: []\n");
+    assertTrue(policy.rulesForUser("u").isEmpty());
+    assertEquals(0, policy.ruleCount());
   }
 
   @Test

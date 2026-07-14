@@ -236,11 +236,12 @@ public final class AclYamlLoader {
     return compiled;
   }
 
-  /** A principal maps straight to its patterns: allow rules are the only kind of rule. */
+  /**
+   * A principal maps straight to its patterns: allow rules are the only kind of rule. An empty
+   * allow list must be written explicitly ({@code alice: []}); a principal with no value at all is
+   * a typo, not a policy, so it is rejected rather than read as "grants nothing".
+   */
   private List<CompiledRule> compilePatterns(Object allow, String owner, Set<Path> unresolved) {
-    if (allow == null) {
-      return List.of();
-    }
     if (!(allow instanceof List<?> patterns)) {
       throw new IllegalArgumentException(owner + " must map to a list of patterns");
     }
