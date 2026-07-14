@@ -252,10 +252,11 @@ public final class AclYamlLoader {
       }
       return new CompiledRule.Glob(pattern, matcher);
     }
-    rejectUploadRootTarget(Path.of(pattern).normalize(), pattern, owner);
+    Path patternPath = Path.of(pattern);
+    rejectUploadRootTarget(patternPath.normalize(), pattern, owner);
     Path canonical;
     try {
-      canonical = Path.of(pattern).toRealPath();
+      canonical = patternPath.toRealPath();
     } catch (IOException e) {
       throw new IllegalArgumentException("Exact pattern '" + pattern + "' under " + owner
           + " does not resolve to an existing file: " + e.getMessage(), e);
