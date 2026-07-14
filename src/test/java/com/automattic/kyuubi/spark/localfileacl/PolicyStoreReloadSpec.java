@@ -327,6 +327,39 @@ class PolicyStoreReloadSpec {
   }
 
   @Test
+  void unresolvedPathTurningIntoABrokenPathInvalidatesInsteadOfLingering() throws Exception {
+    Path later = root.resolve("later.conf");
+    TestSupport.writeAcl(
+        aclFile,
+        """
+        version: 1
+        users:
+          alice:
+            allow:
+              - '%s'
+              - '%s'
+        """
+            .formatted(fileA, later));
+    PolicyStore store =
+        TestSupport.newLoadedStore(
+            aclFile, new AclYamlLoader.Options(uploadRoot, null, false, false), INTERVAL, clock);
+    assertEquals(
+        Set.of(later),
+        assertInstanceOf(AclState.Valid.class, store.current()).policy().unresolvedPaths());
+
+    // The path stops being merely absent and becomes a symlink loop: the loader tolerates only a
+    // genuinely missing file, so probing must force a reparse rather than read this as "still
+    // missing" and keep serving a policy the loader would now reject.
+    Path partner = root.resolve("loop-partner.conf");
+    Files.createSymbolicLink(later, partner);
+    Files.createSymbolicLink(partner, later);
+    tickPastInterval();
+    store.maybeReload();
+
+    assertInstanceOf(AclState.Invalid.class, store.current());
+  }
+
+  @Test
   void concurrentReadersOnlyObserveCompleteSnapshots() throws Exception {
     PolicyStore store = newStore();
     int readers = 4;

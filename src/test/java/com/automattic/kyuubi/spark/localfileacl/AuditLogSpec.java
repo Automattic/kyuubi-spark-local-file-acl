@@ -274,4 +274,27 @@ class AuditLogSpec {
     assertEquals("DENY", fields(record).get("decision"));
     assertEquals(secretFile.toString(), fields(record).get("resource"));
   }
+
+  @Test
+  void escapesUnicodeLineBreaksThatOnlyUnicodeAwareReadersSplitOn() {
+    // U+0085 NEXT LINE, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR: not C0 controls, but
+    // line terminators to a Unicode-aware log processor, which would otherwise read this single
+    // decision as several records.
+    String nextLine = String.valueOf((char) 0x85);
+    String lineSeparator = String.valueOf((char) 0x2028);
+    String paragraphSeparator = String.valueOf((char) 0x2029);
+    String user = "a" + nextLine + "b" + lineSeparator + "c" + paragraphSeparator + "d";
+    assertThrows(
+        KyuubiException.class,
+        () -> engine(groups()).validate(user, Map.of("spark.files", secretFile.toString())));
+
+    String record = audit.onlyMessage();
+    assertFalse(record.contains(nextLine), record);
+    assertFalse(record.contains(lineSeparator), record);
+    assertFalse(record.contains(paragraphSeparator), record);
+    assertEquals(1, record.lines().count(), record);
+    assertTrue(
+        record.contains("user=\"a" + "\\" + "u0085b" + "\\" + "u2028c" + "\\" + "u2029d\""),
+        record);
+  }
 }

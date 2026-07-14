@@ -18,6 +18,12 @@ final class AuditLog {
 
   private static final Logger AUDIT = LoggerFactory.getLogger(LOGGER_NAME);
 
+  /** U+2028 LINE SEPARATOR. */
+  private static final char LINE_SEPARATOR = (char) 0x2028;
+
+  /** U+2029 PARAGRAPH SEPARATOR. */
+  private static final char PARAGRAPH_SEPARATOR = (char) 0x2029;
+
   private AuditLog() {}
 
   /** A grant: {@code principalType} is the kind of rule that matched (user, group, or upload). */
@@ -64,6 +70,11 @@ final class AuditLog {
     line.append('"');
   }
 
+  /**
+   * Escapes every character a log processor could read as a record or field boundary. That means
+   * all ISO control characters — C0, DEL, and the C1 range, which includes U+0085 NEXT LINE — plus
+   * the two Unicode separators, all of which Unicode-aware readers treat as line breaks.
+   */
   private static void escape(StringBuilder line, String value) {
     for (int i = 0; i < value.length(); i++) {
       char c = value.charAt(i);
@@ -74,7 +85,7 @@ final class AuditLog {
         case '\r' -> line.append("\\r");
         case '\t' -> line.append("\\t");
         default -> {
-          if (c < 0x20 || c == 0x7f) {
+          if (Character.isISOControl(c) || c == LINE_SEPARATOR || c == PARAGRAPH_SEPARATOR) {
             line.append(String.format("\\u%04x", (int) c));
           } else {
             line.append(c);
