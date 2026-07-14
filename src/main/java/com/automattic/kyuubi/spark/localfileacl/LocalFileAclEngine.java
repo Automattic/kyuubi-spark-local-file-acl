@@ -7,15 +7,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-
 import org.apache.kyuubi.KyuubiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Validates every policed local resource in a session configuration. A single unauthorized
- * resource rejects the complete submission by throwing {@link KyuubiException}, which aborts
- * Kyuubi session construction before {@code spark-submit} is assembled.
+ * Validates every policed local resource in a session configuration. A single unauthorized resource
+ * rejects the complete submission by throwing {@link KyuubiException}, which aborts Kyuubi session
+ * construction before {@code spark-submit} is assembled.
  */
 public final class LocalFileAclEngine {
 
@@ -30,12 +29,11 @@ public final class LocalFileAclEngine {
   private final LocalResourceParser parser = new LocalResourceParser();
   private final Path uploadRoot;
 
-  /** @param uploadRoot canonicalized Kyuubi shared upload root */
+  /**
+   * @param uploadRoot canonicalized Kyuubi shared upload root
+   */
   public LocalFileAclEngine(
-      PolicedKeys policedKeys,
-      PolicyStore store,
-      GroupResolver groupResolver,
-      Path uploadRoot) {
+      PolicedKeys policedKeys, PolicyStore store, GroupResolver groupResolver, Path uploadRoot) {
     this.policedKeys = policedKeys;
     this.store = store;
     this.groupResolver = groupResolver;
@@ -78,12 +76,20 @@ public final class LocalFileAclEngine {
     // nothing but their own uploads.
     if (path.startsWith(uploadRoot)) {
       if (batchUploadDir.isPresent() && path.startsWith(batchUploadDir.get())) {
-        LOG.info("Local file access granted: user={}, key={}, path={}, reason=upload-exemption, "
-            + "batchUploadDir={}", user, key, path, batchUploadDir.get());
+        LOG.info(
+            "Local file access granted: user={}, key={}, path={}, reason=upload-exemption, "
+                + "batchUploadDir={}",
+            user,
+            key,
+            path,
+            batchUploadDir.get());
         return;
       }
       // Unconditional cross-batch isolation: never fall through to username or group rules.
-      throw deny(user, key, path.toString(),
+      throw deny(
+          user,
+          key,
+          path.toString(),
           "path is under the Kyuubi upload root but not part of the current batch upload");
     }
 
@@ -95,9 +101,15 @@ public final class LocalFileAclEngine {
     for (CompiledRule rule : valid.policy().rulesForUser(user)) {
       if (rule.matches(path)) {
         LOG.debug("Matched user rule '{}' for user {}", rule.patternText(), user);
-        LOG.info("Local file access granted: user={}, groups={}, key={}, path={}, "
-            + "reason=user-rule, principal={}, pattern={}",
-            user, groups.resolvedOrPlaceholder(), key, path, user, rule.patternText());
+        LOG.info(
+            "Local file access granted: user={}, groups={}, key={}, path={}, "
+                + "reason=user-rule, principal={}, pattern={}",
+            user,
+            groups.resolvedOrPlaceholder(),
+            key,
+            path,
+            user,
+            rule.patternText());
         return;
       }
     }
@@ -112,25 +124,34 @@ public final class LocalFileAclEngine {
     for (String group : resolvedGroups) {
       for (CompiledRule rule : valid.policy().rulesForGroup(group)) {
         if (rule.matches(path)) {
-          LOG.debug("Matched group rule '{}' via group {} for user {}",
-              rule.patternText(), group, user);
-          LOG.info("Local file access granted: user={}, groups={}, key={}, path={}, "
-              + "reason=group-rule, principal={}, pattern={}",
-              user, resolvedGroups, key, path, group, rule.patternText());
+          LOG.debug(
+              "Matched group rule '{}' via group {} for user {}", rule.patternText(), group, user);
+          LOG.info(
+              "Local file access granted: user={}, groups={}, key={}, path={}, "
+                  + "reason=group-rule, principal={}, pattern={}",
+              user,
+              resolvedGroups,
+              key,
+              path,
+              group,
+              rule.patternText());
           return;
         }
       }
     }
-    throw deny(user, key, path.toString(), "no ACL rule authorizes this path (groups="
-        + groups.resolvedOrPlaceholder() + ")");
+    throw deny(
+        user,
+        key,
+        path.toString(),
+        "no ACL rule authorizes this path (groups=" + groups.resolvedOrPlaceholder() + ")");
   }
 
   /**
-   * The upload exemption applies only when Kyuubi's reserved upload flag is set and the batch id
-   * is a well-formed UUID whose upload directory exists. Interactive clients must be prevented
-   * from forging both keys via {@code kyuubi.session.conf.ignore.list} (not the restrict list:
-   * Kyuubi injects these keys into every REST batch conf, and {@code AbstractSession} eagerly
-   * validates batch conf against the restrict list, so restricting them fails all batches).
+   * The upload exemption applies only when Kyuubi's reserved upload flag is set and the batch id is
+   * a well-formed UUID whose upload directory exists. Interactive clients must be prevented from
+   * forging both keys via {@code kyuubi.session.conf.ignore.list} (not the restrict list: Kyuubi
+   * injects these keys into every REST batch conf, and {@code AbstractSession} eagerly validates
+   * batch conf against the restrict list, so restricting them fails all batches).
    */
   private Optional<Path> currentBatchUploadDir(Map<String, String> sessionConf) {
     if (!Boolean.parseBoolean(sessionConf.get(BATCH_RESOURCE_UPLOADED_KEY))) {
@@ -153,10 +174,23 @@ public final class LocalFileAclEngine {
   }
 
   private RuntimeException deny(String user, String key, String resource, String reason) {
-    LOG.warn("Local file access denied: user={}, key={}, resource={}, reason={}",
-        user, key, resource, reason);
-    return sneakyThrow(new KyuubiException("Local file access denied for user '" + user
-        + "': configuration key '" + key + "', resource '" + resource + "': " + reason, null));
+    LOG.warn(
+        "Local file access denied: user={}, key={}, resource={}, reason={}",
+        user,
+        key,
+        resource,
+        reason);
+    return sneakyThrow(
+        new KyuubiException(
+            "Local file access denied for user '"
+                + user
+                + "': configuration key '"
+                + key
+                + "', resource '"
+                + resource
+                + "': "
+                + reason,
+            null));
   }
 
   /**

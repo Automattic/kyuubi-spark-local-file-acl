@@ -15,8 +15,8 @@ class PolicedKeysSpec {
     assertEquals("spark.files", PolicedKeys.normalizeKey("files"));
     assertEquals("spark.yarn.dist.files", PolicedKeys.normalizeKey("yarn.dist.files"));
     // Kyuubi prepends the prefix to the complete key, keeping the leading "hadoop.".
-    assertEquals("spark.hadoop.hadoop.fs.defaultFS",
-        PolicedKeys.normalizeKey("hadoop.fs.defaultFS"));
+    assertEquals(
+        "spark.hadoop.hadoop.fs.defaultFS", PolicedKeys.normalizeKey("hadoop.fs.defaultFS"));
   }
 
   @Test
@@ -54,8 +54,8 @@ class PolicedKeysSpec {
 
   @Test
   void excludedKeysTakePrecedenceOverDefaultsAndExtras() {
-    PolicedKeys keys = PolicedKeys.fromSettings(
-        "spark.custom.files:list", "spark.yarn.keytab,spark.custom.files");
+    PolicedKeys keys =
+        PolicedKeys.fromSettings("spark.custom.files:list", "spark.yarn.keytab,spark.custom.files");
     assertFalse(keys.lookup("spark.yarn.keytab").isPresent());
     assertFalse(keys.lookup("yarn.keytab").isPresent());
     assertFalse(keys.lookup("spark.custom.files").isPresent());
@@ -70,31 +70,34 @@ class PolicedKeysSpec {
 
   @Test
   void rejectsMalformedEscapeHatchEntries() {
-    assertThrows(IllegalArgumentException.class,
-        () -> PolicedKeys.fromSettings("spark.custom.files", null));
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class, () -> PolicedKeys.fromSettings("spark.custom.files", null));
+    assertThrows(
+        IllegalArgumentException.class,
         () -> PolicedKeys.fromSettings("spark.custom.files:", null));
-    assertThrows(IllegalArgumentException.class,
-        () -> PolicedKeys.fromSettings(":list", null));
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(IllegalArgumentException.class, () -> PolicedKeys.fromSettings(":list", null));
+    assertThrows(
+        IllegalArgumentException.class,
         () -> PolicedKeys.fromSettings("spark.custom.files:map", null));
-    assertThrows(IllegalArgumentException.class,
-        () -> PolicedKeys.fromSettings("a:list,,b:list", null));
+    assertThrows(
+        IllegalArgumentException.class, () -> PolicedKeys.fromSettings("a:list,,b:list", null));
   }
 
   @Test
   void rejectsConflictingAndDuplicateDefinitions() {
     // Conflicts with the default LIST cardinality of spark.files.
-    assertThrows(IllegalArgumentException.class,
-        () -> PolicedKeys.fromSettings("files:scalar", null));
+    assertThrows(
+        IllegalArgumentException.class, () -> PolicedKeys.fromSettings("files:scalar", null));
     // Duplicate extra definitions, even via alias normalization.
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> PolicedKeys.fromSettings("spark.custom.files:list,custom.files:list", null));
   }
 
   @Test
   void rejectsExclusionsWithoutMatchingKey() {
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> PolicedKeys.fromSettings(null, "spark.nonexistent.key"));
   }
 }

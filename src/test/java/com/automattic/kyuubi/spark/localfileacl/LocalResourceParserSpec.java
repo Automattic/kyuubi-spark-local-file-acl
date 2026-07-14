@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -17,8 +16,7 @@ class LocalResourceParserSpec {
   private static final Cardinality LIST_KEY = Cardinality.LIST;
   private static final Cardinality SCALAR_KEY = Cardinality.SCALAR;
 
-  @TempDir
-  Path tempDir;
+  @TempDir Path tempDir;
 
   private final LocalResourceParser parser = new LocalResourceParser();
   private Path root;
@@ -60,8 +58,7 @@ class LocalResourceParserSpec {
 
   @Test
   void mixesLocalAndRemoteEntriesInLists() {
-    List<Path> locals =
-        parser.parse(LIST_KEY, "hdfs://nn/a.jar," + file + ",s3a://b/c.jar");
+    List<Path> locals = parser.parse(LIST_KEY, "hdfs://nn/a.jar," + file + ",s3a://b/c.jar");
     assertEquals(1, locals.size());
     assertEquals(file, locals.get(0));
   }
@@ -71,27 +68,26 @@ class LocalResourceParserSpec {
     Path commaFile = Files.writeString(root.resolve("a,b.keytab"), "x");
     assertEquals(commaFile, single(SCALAR_KEY, commaFile.toString()));
     // The same value under a LIST key splits and fails on the missing halves.
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, commaFile.toString()));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, commaFile.toString()));
   }
 
   @Test
   void rejectsRelativePathsAndAuthorities() {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "relative.jar"));
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "file:relative.jar"));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, "file://somehost" + file));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "file://somehost" + file));
   }
 
   @Test
   void rejectsEmptyAndMalformedEntries() {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(SCALAR_KEY, ""));
     assertThrows(IllegalArgumentException.class, () -> parser.parse(SCALAR_KEY, "   "));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, file + ",," + file));
+    assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + ",," + file));
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + ","));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, "/path with space.jar"));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "/path with space.jar"));
   }
 
   @Test
@@ -100,8 +96,7 @@ class LocalResourceParserSpec {
     // ASCII whitespace, so the raw value must not be validated as its stripped sibling - it
     // is rejected outright (illegal URI character) instead of resolving to the wrong file.
     Files.writeString(root.resolve("data.conf\u2003"), "x");
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, file + "\u2003"));
+    assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + "\u2003"));
   }
 
   @Test
@@ -113,30 +108,31 @@ class LocalResourceParserSpec {
     // Everything else survives Kyuubi's argument trim and reaches Spark verbatim, so leading
     // whitespace and whitespace before a comma are rejected (illegal URI) rather than being
     // authorized as their trimmed siblings.
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, "  " + file));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, file + " ,hdfs://nn/x.jar"));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, "hdfs://nn/x.jar, " + file));
+    assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "  " + file));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + " ,hdfs://nn/x.jar"));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "hdfs://nn/x.jar, " + file));
   }
 
   @Test
   void rejectsUriQueries() {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, file + "?query=1"));
-    assertThrows(IllegalArgumentException.class,
-        () -> parser.parse(LIST_KEY, "file:" + file + "?query=1"));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(LIST_KEY, "file:" + file + "?query=1"));
   }
 
   @Test
   void rejectsSubmittedGlobs() {
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, root + "/*.conf"));
-    assertThrows(IllegalArgumentException.class, () -> parser.parse(SCALAR_KEY, root + "/k?.keytab"));
+    assertThrows(
+        IllegalArgumentException.class, () -> parser.parse(SCALAR_KEY, root + "/k?.keytab"));
   }
 
   @Test
   void rejectsMissingAndNonRegularPaths() throws Exception {
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> parser.parse(LIST_KEY, root.resolve("missing.jar").toString()));
     Path dir = Files.createDirectory(root.resolve("dir"));
     assertThrows(IllegalArgumentException.class, () -> parser.parse(LIST_KEY, dir.toString()));

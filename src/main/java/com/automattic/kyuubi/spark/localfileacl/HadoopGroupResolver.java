@@ -3,12 +3,11 @@ package com.automattic.kyuubi.spark.localfileacl;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-
 import org.apache.hadoop.security.UserGroupInformation;
 
 /**
- * Resolves groups with Hadoop's configured group mapping and its built-in cache, matching
- * Kyuubi's {@code HadoopGroupProvider} behavior.
+ * Resolves groups with Hadoop's configured group mapping and its built-in cache, matching Kyuubi's
+ * {@code HadoopGroupProvider} behavior.
  */
 public final class HadoopGroupResolver implements GroupResolver {
 

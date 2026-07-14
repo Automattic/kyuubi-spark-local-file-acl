@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-
 import org.apache.kyuubi.plugin.SessionConfAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,8 +13,8 @@ import org.slf4j.LoggerFactory;
  * through Spark file-distribution configuration, before Kyuubi launches {@code spark-submit}.
  *
  * <p>Configure with {@code kyuubi.session.conf.advisor=com.automattic.kyuubi.spark.localfileacl
- * .SparkLocalFileAclAdvisor} and pass plugin settings as JVM system properties (see
- * {@link PluginSettings}).
+ * .SparkLocalFileAclAdvisor} and pass plugin settings as JVM system properties (see {@link
+ * PluginSettings}).
  */
 public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
 
@@ -29,18 +28,25 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
       PolicedKeys policedKeys =
           PolicedKeys.fromSettings(settings.extraKeysSpec(), settings.excludedKeysSpec());
       Path uploadRoot = canonicalUploadRoot(settings.uploadRoot());
-      PolicyStore store = new PolicyStore(
-          settings.rulesFile(),
-          new AclYamlLoader(uploadRoot, settings.expectedOwner()),
-          settings.reloadInterval(),
-          System::nanoTime);
+      PolicyStore store =
+          new PolicyStore(
+              settings.rulesFile(),
+              new AclYamlLoader(uploadRoot, settings.expectedOwner()),
+              settings.reloadInterval(),
+              System::nanoTime);
       store.initialLoad();
       this.engine =
           new LocalFileAclEngine(policedKeys, store, new HadoopGroupResolver(), uploadRoot);
-      policedKeys.effectiveKeys().forEach((key, cardinality) ->
-          LOG.info("Policing local file key {} ({})", key, cardinality));
-      LOG.info("SparkLocalFileAclAdvisor initialized: rulesFile={}, reloadInterval={}, "
-          + "uploadRoot={}", settings.rulesFile(), settings.reloadInterval(), uploadRoot);
+      policedKeys
+          .effectiveKeys()
+          .forEach(
+              (key, cardinality) -> LOG.info("Policing local file key {} ({})", key, cardinality));
+      LOG.info(
+          "SparkLocalFileAclAdvisor initialized: rulesFile={}, reloadInterval={}, "
+              + "uploadRoot={}",
+          settings.rulesFile(),
+          settings.reloadInterval(),
+          uploadRoot);
     } catch (RuntimeException e) {
       LOG.error("SparkLocalFileAclAdvisor initialization failed", e);
       throw e;
@@ -54,8 +60,8 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
   }
 
   /**
-   * The upload root must canonicalize successfully or cross-batch isolation could be bypassed:
-   * a symlinked ancestor would give submitted resources (always {@code toRealPath()}-resolved) a
+   * The upload root must canonicalize successfully or cross-batch isolation could be bypassed: a
+   * symlinked ancestor would give submitted resources (always {@code toRealPath()}-resolved) a
    * different prefix than a lexically-normalized root, so upload paths would fall through to
    * ordinary ACL rules. Create it if Kyuubi has not yet, and fail startup otherwise.
    */
@@ -64,8 +70,8 @@ public final class SparkLocalFileAclAdvisor implements SessionConfAdvisor {
       Files.createDirectories(uploadRoot);
       return uploadRoot.toRealPath();
     } catch (IOException e) {
-      throw new IllegalStateException("Cannot create or canonicalize the Kyuubi upload root "
-          + uploadRoot, e);
+      throw new IllegalStateException(
+          "Cannot create or canonicalize the Kyuubi upload root " + uploadRoot, e);
     }
   }
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- Intentional design decisions, with justification. Keep this list short. -->
+
+    <!-- False positive: the record's compact constructor deep-copies both maps via
+         List.copyOf + Map.copyOf, so the accessors return JDK-immutable collections.
+         SpotBugs reasons over the declared Map interface type and cannot see this. -->
+    <Match>
+        <Class name="com.automattic.kyuubi.spark.localfileacl.AclPolicy"/>
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
+</FindBugsFilter>

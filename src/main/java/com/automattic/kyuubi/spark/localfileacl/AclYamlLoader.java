@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
-
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -29,14 +28,18 @@ public final class AclYamlLoader {
   private static final int SUPPORTED_VERSION = 1;
   private static final String GLOB_META_CHARS = "*?[]{}";
   private static final Set<String> TOP_LEVEL_KEYS = Set.of("version", "users", "groups");
+
   /** Hard cap applied before the content is read; a policy file has no business being larger. */
   static final long MAX_ACL_BYTES = 1 << 20;
+
   private static final int READ_RETRIES = 3;
 
   private final Path uploadRoot;
   private final String expectedOwner;
+
   /** Test seam: runs between the pre-read integrity check and the content read. */
   private final Runnable preReadHook;
+
   /** Test seam: resolves the owning OS user of a path. */
   private final Function<Path, String> ownerLookup;
 
@@ -74,13 +77,13 @@ public final class AclYamlLoader {
 
   /**
    * Verifies the ACL file's integrity and reads its content as one consistent, bounded snapshot.
-   * The file must be regular, within the size cap, not beneath the Kyuubi upload root, and owned
-   * by the expected owner when one is configured; neither it nor any ancestor directory may be
-   * group- or world-writable, and with a configured owner every ancestor directory must be owned
-   * by that owner or root (otherwise a directory-entry swap could substitute the policy). The
-   * read itself is bounded to the cap and accepted only when the file key, size, and modification
-   * time are identical before and after, the content length matches, and a second full integrity
-   * check passes — guarding against a swap or rewrite between validation and read.
+   * The file must be regular, within the size cap, not beneath the Kyuubi upload root, and owned by
+   * the expected owner when one is configured; neither it nor any ancestor directory may be group-
+   * or world-writable, and with a configured owner every ancestor directory must be owned by that
+   * owner or root (otherwise a directory-entry swap could substitute the policy). The read itself
+   * is bounded to the cap and accepted only when the file key, size, and modification time are
+   * identical before and after, the content length matches, and a second full integrity check
+   * passes — guarding against a swap or rewrite between validation and read.
    */
   public byte[] readVerified(Path aclFile) throws IOException {
     IOException unstable = null;
@@ -107,7 +110,8 @@ public final class AclYamlLoader {
       BasicFileAttributes after =
           Files.readAttributes(realFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
       verifyIntegrity(realFile, after);
-      if (before.fileKey() != null && before.fileKey().equals(after.fileKey())
+      if (before.fileKey() != null
+          && before.fileKey().equals(after.fileKey())
           && before.size() == after.size()
           && before.lastModifiedTime().equals(after.lastModifiedTime())
           && content.length == before.size()) {
@@ -131,8 +135,13 @@ public final class AclYamlLoader {
     if (expectedOwner != null) {
       String owner = ownerLookup.apply(realFile);
       if (!expectedOwner.equals(owner)) {
-        throw new IOException("ACL file is owned by '" + owner + "' but '" + expectedOwner
-            + "' is required: " + realFile);
+        throw new IOException(
+            "ACL file is owned by '"
+                + owner
+                + "' but '"
+                + expectedOwner
+                + "' is required: "
+                + realFile);
       }
     }
     rejectLoosePermissions(realFile, "ACL file");
@@ -141,8 +150,14 @@ public final class AclYamlLoader {
       if (expectedOwner != null) {
         String dirOwner = ownerLookup.apply(dir);
         if (!expectedOwner.equals(dirOwner) && !"root".equals(dirOwner)) {
-          throw new IOException("ACL file ancestor directory " + dir + " is owned by '" + dirOwner
-              + "'; only '" + expectedOwner + "' or root may control the path to the policy");
+          throw new IOException(
+              "ACL file ancestor directory "
+                  + dir
+                  + " is owned by '"
+                  + dirOwner
+                  + "'; only '"
+                  + expectedOwner
+                  + "' or root may control the path to the policy");
         }
       }
     }
@@ -180,8 +195,8 @@ public final class AclYamlLoader {
     }
     Object version = rootMap.get("version");
     if (!Integer.valueOf(SUPPORTED_VERSION).equals(version)) {
-      throw new IllegalArgumentException("Unsupported ACL version '" + version + "'; expected "
-          + SUPPORTED_VERSION);
+      throw new IllegalArgumentException(
+          "Unsupported ACL version '" + version + "'; expected " + SUPPORTED_VERSION);
     }
 
     return new AclPolicy(
@@ -195,19 +210,27 @@ public final class AclYamlLoader {
       return compiled;
     }
     Map<String, Object> principals = asMap(section, "'" + sectionName + "' section");
-    principals.forEach((principal, body) -> {
-      if (principal == null || principal.isBlank()) {
-        throw new IllegalArgumentException("Blank principal name in '" + sectionName + "'");
-      }
-      Map<String, Object> entry = asMap(body, sectionName + "." + principal);
-      for (String key : entry.keySet()) {
-        if (!"allow".equals(key)) {
-          throw new IllegalArgumentException("Unknown key '" + key + "' under " + sectionName
-              + "." + principal + "; only 'allow' is supported");
-        }
-      }
-      compiled.put(principal, compilePatterns(entry.get("allow"), sectionName + "." + principal));
-    });
+    principals.forEach(
+        (principal, body) -> {
+          if (principal == null || principal.isBlank()) {
+            throw new IllegalArgumentException("Blank principal name in '" + sectionName + "'");
+          }
+          Map<String, Object> entry = asMap(body, sectionName + "." + principal);
+          for (String key : entry.keySet()) {
+            if (!"allow".equals(key)) {
+              throw new IllegalArgumentException(
+                  "Unknown key '"
+                      + key
+                      + "' under "
+                      + sectionName
+                      + "."
+                      + principal
+                      + "; only 'allow' is supported");
+            }
+          }
+          compiled.put(
+              principal, compilePatterns(entry.get("allow"), sectionName + "." + principal));
+        });
     return compiled;
   }
 
@@ -230,17 +253,21 @@ public final class AclYamlLoader {
 
   private CompiledRule compilePattern(String pattern, String owner) {
     if (pattern.matches("^[A-Za-z][A-Za-z0-9+.\\-]*:.*")) {
-      throw new IllegalArgumentException("Pattern '" + pattern + "' under " + owner
-          + " must be an absolute local path, not a URI");
+      throw new IllegalArgumentException(
+          "Pattern '"
+              + pattern
+              + "' under "
+              + owner
+              + " must be an absolute local path, not a URI");
     }
     if (!pattern.startsWith("/")) {
-      throw new IllegalArgumentException("Pattern '" + pattern + "' under " + owner
-          + " must be absolute");
+      throw new IllegalArgumentException(
+          "Pattern '" + pattern + "' under " + owner + " must be absolute");
     }
     for (String segment : pattern.split("/")) {
       if ("..".equals(segment)) {
-        throw new IllegalArgumentException("Pattern '" + pattern + "' under " + owner
-            + " must not contain a '..' segment");
+        throw new IllegalArgumentException(
+            "Pattern '" + pattern + "' under " + owner + " must not contain a '..' segment");
       }
     }
     if (containsGlobMeta(pattern)) {
@@ -249,8 +276,8 @@ public final class AclYamlLoader {
       try {
         matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
       } catch (RuntimeException e) {
-        throw new IllegalArgumentException("Invalid glob pattern '" + pattern + "' under " + owner
-            + ": " + e.getMessage(), e);
+        throw new IllegalArgumentException(
+            "Invalid glob pattern '" + pattern + "' under " + owner + ": " + e.getMessage(), e);
       }
       return new CompiledRule.Glob(pattern, matcher);
     }
@@ -260,8 +287,14 @@ public final class AclYamlLoader {
     try {
       canonical = patternPath.toRealPath();
     } catch (IOException e) {
-      throw new IllegalArgumentException("Exact pattern '" + pattern + "' under " + owner
-          + " does not resolve to an existing file: " + e.getMessage(), e);
+      throw new IllegalArgumentException(
+          "Exact pattern '"
+              + pattern
+              + "' under "
+              + owner
+              + " does not resolve to an existing file: "
+              + e.getMessage(),
+          e);
     }
     rejectUploadRootTarget(canonical, pattern, owner);
     return new CompiledRule.Exact(pattern, canonical);
@@ -270,14 +303,19 @@ public final class AclYamlLoader {
   @SuppressWarnings("unchecked")
   private static Map<String, Object> asMap(Object value, String what) {
     if (!(value instanceof Map<?, ?> map)) {
-      throw new IllegalArgumentException("Expected a mapping for " + what + " but found "
-          + (value == null ? "nothing" : value.getClass().getSimpleName()));
+      throw new IllegalArgumentException(
+          "Expected a mapping for "
+              + what
+              + " but found "
+              + (value == null ? "nothing" : value.getClass().getSimpleName()));
     }
-    map.keySet().forEach(key -> {
-      if (!(key instanceof String)) {
-        throw new IllegalArgumentException("Non-string key '" + key + "' in " + what);
-      }
-    });
+    map.keySet()
+        .forEach(
+            key -> {
+              if (!(key instanceof String)) {
+                throw new IllegalArgumentException("Non-string key '" + key + "' in " + what);
+              }
+            });
     return (Map<String, Object>) map;
   }
 
@@ -311,8 +349,13 @@ public final class AclYamlLoader {
 
   private void rejectUploadRootTarget(Path target, String pattern, String owner) {
     if (target.startsWith(uploadRoot)) {
-      throw new IllegalArgumentException("Pattern '" + pattern + "' under " + owner
-          + " targets the Kyuubi upload root " + uploadRoot);
+      throw new IllegalArgumentException(
+          "Pattern '"
+              + pattern
+              + "' under "
+              + owner
+              + " targets the Kyuubi upload root "
+              + uploadRoot);
     }
   }
 }

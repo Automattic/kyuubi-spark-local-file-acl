@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-
 import org.apache.kyuubi.KyuubiException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 /** End-to-end contract of the zero-arg advisor wired purely from JVM system properties. */
 class AdvisorContractSpec {
 
-  @TempDir
-  Path tempDir;
+  @TempDir Path tempDir;
 
   private Path root;
   private Path allowedFile;
@@ -29,17 +27,20 @@ class AdvisorContractSpec {
   void setUp() throws Exception {
     root = TestSupport.real(tempDir);
     Path uploadRoot = Files.createDirectories(root.resolve("upload"));
-    allowedFile = Files.writeString(
-        Files.createDirectories(root.resolve("res")).resolve("app.conf"), "x");
+    allowedFile =
+        Files.writeString(Files.createDirectories(root.resolve("res")).resolve("app.conf"), "x");
     secretFile = Files.writeString(root.resolve("secret.keytab"), "x");
     Path aclFile = root.resolve("acl.yaml");
-    TestSupport.writeAcl(aclFile, """
+    TestSupport.writeAcl(
+        aclFile,
+        """
         version: 1
         users:
           alice:
             allow:
               - '%s/res/*.conf'
-        """.formatted(root));
+        """
+            .formatted(root));
     System.setProperty(PluginSettings.RULES_FILE_PROP, aclFile.toString());
     System.setProperty(PluginSettings.UPLOAD_ROOT_PROP, uploadRoot.toString());
     System.setProperty(PluginSettings.RELOAD_INTERVAL_PROP, "PT60S");
@@ -57,10 +58,12 @@ class AdvisorContractSpec {
   @Test
   void authorizedSubmissionReturnsEmptyOverlay() {
     SparkLocalFileAclAdvisor advisor = new SparkLocalFileAclAdvisor();
-    Map<String, String> sessionConf = new HashMap<>(Map.of(
-        "spark.files", allowedFile.toString(),
-        "spark.jars", "hdfs://nn/lib.jar",
-        "spark.executor.memory", "4g"));
+    Map<String, String> sessionConf =
+        new HashMap<>(
+            Map.of(
+                "spark.files", allowedFile.toString(),
+                "spark.jars", "hdfs://nn/lib.jar",
+                "spark.executor.memory", "4g"));
     Map<String, String> before = Map.copyOf(sessionConf);
 
     Map<String, String> overlay = advisor.getConfOverlay("alice", sessionConf);
@@ -68,15 +71,17 @@ class AdvisorContractSpec {
     assertTrue(overlay.isEmpty(), "authorized submissions must leave the configuration unchanged");
     assertTrue(sessionConf.equals(before), "advisor must not mutate the session configuration");
     // Plugin JVM settings never leak into the effective Spark configuration.
-    assertTrue(sessionConf.keySet().stream()
-        .noneMatch(key -> key.startsWith("kyuubi.local.file.acl.")));
+    assertTrue(
+        sessionConf.keySet().stream().noneMatch(key -> key.startsWith("kyuubi.local.file.acl.")));
   }
 
   @Test
   void unauthorizedSubmissionThrowsKyuubiException() {
     SparkLocalFileAclAdvisor advisor = new SparkLocalFileAclAdvisor();
-    KyuubiException e = assertThrows(KyuubiException.class,
-        () -> advisor.getConfOverlay("alice", Map.of("spark.files", secretFile.toString())));
+    KyuubiException e =
+        assertThrows(
+            KyuubiException.class,
+            () -> advisor.getConfOverlay("alice", Map.of("spark.files", secretFile.toString())));
     assertTrue(e.getMessage().contains("alice"));
     assertTrue(e.getMessage().contains(secretFile.toString()));
   }
@@ -88,7 +93,8 @@ class AdvisorContractSpec {
     SparkLocalFileAclAdvisor advisor = new SparkLocalFileAclAdvisor();
 
     // Extra key policed: unauthorized local file rejected.
-    assertThrows(KyuubiException.class,
+    assertThrows(
+        KyuubiException.class,
         () -> advisor.getConfOverlay("alice", Map.of("spark.custom.files", secretFile.toString())));
     // Excluded key ignored even though it is a default.
     advisor.getConfOverlay("alice", Map.of("spark.yarn.keytab", secretFile.toString()));
@@ -100,15 +106,19 @@ class AdvisorContractSpec {
     Path linkedWork = Files.createSymbolicLink(root.resolve("linked-work"), realWork);
     // Configure the not-yet-existing upload root through the symlinked ancestor; the advisor
     // must create and canonicalize it so upload paths keep a matching prefix.
-    System.setProperty(PluginSettings.UPLOAD_ROOT_PROP,
-        linkedWork.resolve("upload").toString());
+    System.setProperty(PluginSettings.UPLOAD_ROOT_PROP, linkedWork.resolve("upload").toString());
     SparkLocalFileAclAdvisor advisor = new SparkLocalFileAclAdvisor();
 
-    Path staged = Files.writeString(
-        Files.createDirectories(realWork.resolve("upload")
-            .resolve(UUID.randomUUID().toString())).resolve("other.jar"), "x");
-    KyuubiException e = assertThrows(KyuubiException.class,
-        () -> advisor.getConfOverlay("alice", Map.of("spark.files", staged.toString())));
+    Path staged =
+        Files.writeString(
+            Files.createDirectories(
+                    realWork.resolve("upload").resolve(UUID.randomUUID().toString()))
+                .resolve("other.jar"),
+            "x");
+    KyuubiException e =
+        assertThrows(
+            KyuubiException.class,
+            () -> advisor.getConfOverlay("alice", Map.of("spark.files", staged.toString())));
     // Denied specifically by cross-batch upload isolation, not by a generic no-rule miss —
     // proving the canonicalized upload root still recognized the resource as an upload.
     assertTrue(e.getMessage().contains("upload root"), e.getMessage());

@@ -188,10 +188,16 @@ beneath one of its roots. The plugin remains independently correct without it.
 ## Development
 
 ```bash
-mvn test     # unit tests
-mvn verify   # + integration tests booting an embedded Kyuubi 1.11.1 server (no Spark needed)
-mvn package  # shaded plugin jar in target/
+mvn test              # unit tests
+mvn verify            # + integration tests (embedded Kyuubi 1.11.1 server, no Spark needed),
+                      #   Spotless format check, SpotBugs analysis, Enforcer rules
+mvn package           # shaded plugin jar in target/
+mvn spotless:apply    # reformat sources (google-java-format); run before committing
 ```
+
+Code style is google-java-format, enforced by Spotless at `verify`; SpotBugs runs at max effort
+with justified exclusions in `spotbugs-exclude.xml`; Enforcer requires Maven 3.8+ and JDK 17+.
+`.mvn/jvm.config` carries the `--add-exports` flags google-java-format needs on JDK 17+.
 
 Integration tests port Kyuubi's `WithKyuubiServer` bootstrap to JUnit: an embedded ZooKeeper plus
 a real KyuubiServer with this advisor installed, exercising THRIFT interactive rejection, REST

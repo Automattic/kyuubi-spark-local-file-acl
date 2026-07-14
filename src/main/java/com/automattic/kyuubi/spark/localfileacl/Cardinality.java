@@ -11,8 +11,9 @@ public enum Cardinality {
     return switch (value.strip().toLowerCase(Locale.ROOT)) {
       case "list" -> LIST;
       case "scalar" -> SCALAR;
-      default -> throw new IllegalArgumentException("Unknown cardinality '" + value
-          + "'; expected 'list' or 'scalar'");
+      default ->
+          throw new IllegalArgumentException(
+              "Unknown cardinality '" + value + "'; expected 'list' or 'scalar'");
     };
   }
 }

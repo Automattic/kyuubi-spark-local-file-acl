@@ -6,7 +6,6 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +21,7 @@ public final class PolicyStore {
   private final Path aclFile;
   private final AclYamlLoader loader;
   private final Duration reloadInterval;
+
   /** Monotonic nanosecond source, so a backward wall-clock step cannot delay revocation. */
   private final LongSupplier ticker;
 
@@ -29,8 +29,8 @@ public final class PolicyStore {
   private final ReentrantLock reloadLock = new ReentrantLock();
   private volatile long nextCheckAtNanos;
 
-  public PolicyStore(Path aclFile, AclYamlLoader loader, Duration reloadInterval,
-      LongSupplier ticker) {
+  public PolicyStore(
+      Path aclFile, AclYamlLoader loader, Duration reloadInterval, LongSupplier ticker) {
     this.aclFile = aclFile;
     this.loader = loader;
     this.reloadInterval = reloadInterval;
@@ -81,13 +81,21 @@ public final class PolicyStore {
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
-      LOG.info("Activated ACL policy from {}: {} users, {} groups, {} rules, digest {}, {} ms",
-          aclFile, policy.userRules().size(), policy.groupRules().size(), policy.ruleCount(),
-          digest, (System.nanoTime() - startNanos) / 1_000_000);
+      LOG.info(
+          "Activated ACL policy from {}: {} users, {} groups, {} rules, digest {}, {} ms",
+          aclFile,
+          policy.userRules().size(),
+          policy.groupRules().size(),
+          policy.ruleCount(),
+          digest,
+          (System.nanoTime() - startNanos) / 1_000_000);
     } catch (Exception e) {
       state = new AclState.Invalid(e.getMessage());
-      LOG.warn("ACL policy at {} is invalid; local resources will be rejected until a valid "
-          + "policy is installed", aclFile, e);
+      LOG.warn(
+          "ACL policy at {} is invalid; local resources will be rejected until a valid "
+              + "policy is installed",
+          aclFile,
+          e);
     }
   }
 
