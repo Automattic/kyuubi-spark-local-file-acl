@@ -270,14 +270,41 @@ against a real server.
 ### Do not use the restrict list for these keys on Kyuubi 1.11.x
 
 `kyuubi.session.conf.restrict.list` is the intuitive choice — it makes Kyuubi *reject* a session
-that sets a listed key — and it **breaks every batch submission**. Kyuubi injects these same two
-keys into batch configuration itself, and `AbstractSession` eagerly validates the complete batch
-configuration against the restrict list, so the server rejects its own injected keys (verified
-against 1.11.1).
+that sets a listed key, rather than quietly dropping it — and it **breaks every batch submission**.
 
-The ignore list *strips* instead of *rejects*, and it applies to interactive sessions, so it
-neutralizes forgery while leaving legitimate batch configuration intact. The separate batch ignore
-list must NOT contain these keys.
+Both lists are checked in `SessionManager.validateKey`: a restricted key throws
+`KyuubiSQLException`, an ignored key is dropped with a warning. Stripping is all this plugin needs
+(the advisor then finds no current batch and denies the path), and rejecting is what causes the
+damage, because Kyuubi injects these two keys itself. `BatchesResource` adds
+`kyuubi.batch.id` and `kyuubi.batch.resource.uploaded` to the configuration of *every* batch, so
+they are present whether or not the client sent them.
+
+`KyuubiBatchSession` appears to be immune: it overrides `normalizedConf` to use
+`SessionManager.validateBatchConf`, which consults only the *batch* ignore list and never the
+restrict list. But overriding a Scala `val` does not remove the superclass's initializer.
+`AbstractSession` still declares
+
+```scala
+val normalizedConf: Map[String, String] = sessionManager.validateAndNormalizeConf(conf)
+```
+
+and that initializer runs during superclass construction, over the complete batch configuration,
+using the restrict-list-enforcing code path. Its result is discarded — the override wins — but its
+exception is not. The server therefore rejects its own injected keys and every batch submission
+fails, before the advisor is ever consulted. Verified against 1.11.1: with these keys in the
+restrict list, all REST batches fail; with them in the session ignore list, they pass.
+
+Also keep them **out** of `kyuubi.batch.conf.ignore.list`. That list is the one `validateBatchConf`
+consults, so it would strip the keys from legitimate batch configuration, leaving the advisor
+unable to identify the current batch and denying every batch upload as a cross-batch access — the
+mirror image of the restrict-list failure.
+
+| Configuration | Interactive forgery | Legitimate batch uploads |
+| --- | --- | --- |
+| Neither list | **Forgeable** — one batch reads another's uploads | Work |
+| `kyuubi.session.conf.ignore.list` (correct) | Keys stripped, path denied | Work |
+| `kyuubi.session.conf.restrict.list` | Session rejected | **All batches fail** (server's own keys) |
+| `kyuubi.batch.conf.ignore.list` | Unaffected | **All uploads denied** (exemption never applies) |
 
 ## Optional Kyuubi 1.12+ global hardening
 
