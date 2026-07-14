@@ -72,7 +72,7 @@ public final class LocalResourceParser {
     }
     // uri.getPath() already excludes any '#alias' fragment.
     String path = uri.getPath();
-    if (path == null || path.isEmpty() || !path.startsWith("/")) {
+    if (path == null || !path.startsWith("/")) {
       throw new IllegalArgumentException("Local resource '" + entry + "' must be an absolute path");
     }
     if (AclYamlLoader.containsGlobMeta(path)) {
