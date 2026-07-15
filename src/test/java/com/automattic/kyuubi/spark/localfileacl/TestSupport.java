@@ -42,7 +42,11 @@ final class TestSupport {
     Files.setPosixFilePermissions(file, OWNER_ONLY);
   }
 
-  /** A version-2 ACL document granting each principal (in insertion order) its listed paths. */
+  /**
+   * A version-2 ACL document granting each principal in {@code rules} its listed paths. Principals
+   * are emitted in the map's iteration order; pass a {@link java.util.LinkedHashMap} when that order
+   * matters (it does not affect parsing).
+   */
   static String usersAcl(Map<String, List<Path>> rules) {
     StringBuilder yaml = new StringBuilder("version: 2\nusers:\n");
     rules.forEach(
