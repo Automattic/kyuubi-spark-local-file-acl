@@ -110,14 +110,11 @@ public final class PolicyStore {
       if (wasValidOrStartup) {
         String oldDigest = previous instanceof AclState.Valid valid ? valid.digest() : null;
         AuditLog.reload(
-            "invalidated",
+            AuditLog.ReloadOutcome.INVALIDATED,
             aclFile.toString(),
             oldDigest,
             null,
-            0,
-            0,
-            0,
-            0,
+            null,
             AclPolicy.ReloadDiff.EMPTY,
             e.getMessage());
       }
@@ -126,37 +123,23 @@ public final class PolicyStore {
 
   private void auditActivation(AclState previous, AclPolicy policy, String digest) {
     String source = aclFile.toString();
-    int users = policy.userRules().size();
-    int groups = policy.groupRules().size();
-    int rules = policy.ruleCount();
-    int unresolved = policy.unresolvedPaths().size();
     if (previous instanceof AclState.Valid valid) {
       AuditLog.reload(
-          "changed",
+          AuditLog.ReloadOutcome.CHANGED,
           source,
           valid.digest(),
           digest,
-          users,
-          groups,
-          rules,
-          unresolved,
+          policy,
           AclPolicy.diff(valid.policy(), policy),
           null);
     } else {
       // Initial load (previous == null) versus recovery from an invalid state. Neither has a prior
       // policy to diff against, so the counts and outcome carry the whole story.
-      String outcome = previous instanceof AclState.Invalid ? "recovered" : "loaded";
-      AuditLog.reload(
-          outcome,
-          source,
-          null,
-          digest,
-          users,
-          groups,
-          rules,
-          unresolved,
-          AclPolicy.ReloadDiff.EMPTY,
-          null);
+      AuditLog.ReloadOutcome outcome =
+          previous instanceof AclState.Invalid
+              ? AuditLog.ReloadOutcome.RECOVERED
+              : AuditLog.ReloadOutcome.LOADED;
+      AuditLog.reload(outcome, source, null, digest, policy, AclPolicy.ReloadDiff.EMPTY, null);
     }
   }
 

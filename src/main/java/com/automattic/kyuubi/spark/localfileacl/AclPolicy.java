@@ -121,8 +121,17 @@ public record AclPolicy(
                 principalRules.forEach(
                     rule -> {
                       if (rule instanceof CompiledRule.Exact exact) {
-                        collected.add(Path.of(exact.patternText()).normalize());
+                        collected.add(unresolvedKey(exact.patternText()));
                       }
                     }));
+  }
+
+  /**
+   * The single definition of how an exact pattern is keyed for missing-file tracking. Both the
+   * loader (which populates {@link #unresolvedPaths()}) and {@link #diff} key on this, so the
+   * "resolved" detection cannot silently drift from how the unresolved set was built.
+   */
+  static Path unresolvedKey(String pattern) {
+    return Path.of(pattern).normalize();
   }
 }

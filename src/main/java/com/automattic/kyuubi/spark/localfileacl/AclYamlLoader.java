@@ -300,7 +300,7 @@ public final class AclYamlLoader {
       return Optional.of(new CompiledRule.Glob(pattern, matcher));
     }
     Path patternPath = Path.of(pattern);
-    Path normalized = patternPath.normalize();
+    Path normalized = AclPolicy.unresolvedKey(pattern);
     rejectUploadRootTarget(normalized, pattern, owner);
     Path canonical;
     try {

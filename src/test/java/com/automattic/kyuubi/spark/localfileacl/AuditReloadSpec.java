@@ -7,11 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.LogEvent;
 import org.junit.jupiter.api.AfterEach;
@@ -23,8 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 class AuditReloadSpec {
 
   private static final Duration INTERVAL = Duration.ofSeconds(60);
-  private static final Pattern FIELD =
-      Pattern.compile("(\\w+)=(?:\"((?:[^\"\\\\]|\\\\.)*)\"|(\\S+))");
+  private static final String RELOAD_PREFIX = "event=local_file_acl_reload";
 
   @TempDir Path tempDir;
 
@@ -76,19 +72,8 @@ class AuditReloadSpec {
     clock.advance(INTERVAL.plusSeconds(1));
   }
 
-  private static Map<String, String> fields(String record) {
-    Map<String, String> parsed = new LinkedHashMap<>();
-    Matcher matcher = FIELD.matcher(record);
-    while (matcher.find()) {
-      parsed.put(matcher.group(1), matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
-    }
-    return parsed;
-  }
-
   private List<LogEvent> reloadEvents() {
-    return audit.events().stream()
-        .filter(e -> e.getMessage().getFormattedMessage().startsWith("event=local_file_acl_reload"))
-        .toList();
+    return audit.eventsWithPrefix(RELOAD_PREFIX);
   }
 
   private LogEvent lastReloadEvent() {
@@ -97,7 +82,7 @@ class AuditReloadSpec {
   }
 
   private Map<String, String> lastReload() {
-    return fields(lastReloadEvent().getMessage().getFormattedMessage());
+    return TestSupport.parseLogfmt(lastReloadEvent().getMessage().getFormattedMessage());
   }
 
   @Test

@@ -1,5 +1,6 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,39 +46,51 @@ final class AuditLog {
     AUDIT.warn(record("DENY", user, key, resource, reason, "", "", ""));
   }
 
+  /** The kind of reload transition; each carries the level its event logs at. */
+  enum ReloadOutcome {
+    LOADED, // initial load
+    CHANGED, // a running policy was replaced
+    RECOVERED, // a valid policy replaced an invalid one
+    INVALIDATED; // a running policy became invalid — revokes access, so it logs at WARN
+
+    boolean revokesAccess() {
+      return this == INVALIDATED;
+    }
+
+    String wire() {
+      return name().toLowerCase(Locale.ROOT);
+    }
+  }
+
   /**
-   * A policy lifecycle event on reload: {@code outcome} is {@code loaded} (initial load), {@code
-   * changed} (a running policy was replaced), {@code recovered} (a valid policy replaced an invalid
-   * one), or {@code invalidated} (a running policy became invalid). Multi-valued fields hold
-   * comma-joined identities; only {@code invalidated} logs at WARN, since it revokes access.
+   * A policy lifecycle event on reload. {@code policy} is the newly published policy (null when a
+   * reload produced an invalid state); its counts describe the active policy. Multi-valued diff
+   * fields hold comma-joined identities.
    */
   static void reload(
-      String outcome,
+      ReloadOutcome outcome,
       String source,
       String oldDigest,
       String newDigest,
-      int users,
-      int groups,
-      int rules,
-      int unresolved,
+      AclPolicy policy,
       AclPolicy.ReloadDiff diff,
       String error) {
     StringBuilder line = new StringBuilder(200);
     line.append("event=local_file_acl_reload");
-    append(line, "outcome", outcome);
+    append(line, "outcome", outcome.wire());
     append(line, "source", source);
     append(line, "old_digest", oldDigest);
     append(line, "new_digest", newDigest);
-    appendInt(line, "users", users);
-    appendInt(line, "groups", groups);
-    appendInt(line, "rules", rules);
-    appendInt(line, "unresolved", unresolved);
+    appendInt(line, "users", policy == null ? 0 : policy.userRules().size());
+    appendInt(line, "groups", policy == null ? 0 : policy.groupRules().size());
+    appendInt(line, "rules", policy == null ? 0 : policy.ruleCount());
+    appendInt(line, "unresolved", policy == null ? 0 : policy.unresolvedPaths().size());
     append(line, "added", String.join(",", diff.addedRules()));
     append(line, "removed", String.join(",", diff.removedRules()));
     append(line, "resolved", String.join(",", diff.resolvedPaths()));
     append(line, "pending", String.join(",", diff.pendingPaths()));
     append(line, "error", error);
-    if ("invalidated".equals(outcome)) {
+    if (outcome.revokesAccess()) {
       AUDIT.warn(line.toString());
     } else {
       AUDIT.info(line.toString());

@@ -47,6 +47,15 @@ final class AuditCapture implements AutoCloseable {
     return List.copyOf(appender.events);
   }
 
+  /**
+   * The category carries decision and reload events; callers select one kind by its wire prefix.
+   */
+  List<LogEvent> eventsWithPrefix(String prefix) {
+    return events().stream()
+        .filter(event -> event.getMessage().getFormattedMessage().startsWith(prefix))
+        .toList();
+  }
+
   LogEvent onlyEvent() {
     List<LogEvent> events = events();
     if (events.size() != 1) {

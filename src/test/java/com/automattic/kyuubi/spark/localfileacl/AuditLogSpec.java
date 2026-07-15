@@ -8,13 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.apache.kyuubi.KyuubiException;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.LogEvent;
@@ -26,8 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 /** The audit stream operators pull: exactly one record per decision, on a fixed, safe schema. */
 class AuditLogSpec {
 
-  private static final Pattern FIELD =
-      Pattern.compile("(\\w+)=(?:\"((?:[^\"\\\\]|\\\\.)*)\"|(\\S+))");
+  private static final String DECISION_PREFIX = "event=local_file_acl decision=";
 
   @TempDir Path tempDir;
 
@@ -79,15 +75,9 @@ class AuditLogSpec {
     return user -> Set.of(names);
   }
 
-  /** Parses one logfmt record into its fields, the way an operator's log pipeline would. */
   private static Map<String, String> fields(String record) {
-    assertTrue(record.startsWith("event=local_file_acl decision="), record);
-    Map<String, String> parsed = new LinkedHashMap<>();
-    Matcher matcher = FIELD.matcher(record);
-    while (matcher.find()) {
-      parsed.put(matcher.group(1), matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
-    }
-    return parsed;
+    assertTrue(record.startsWith(DECISION_PREFIX), record);
+    return TestSupport.parseLogfmt(record);
   }
 
   /**
@@ -95,10 +85,7 @@ class AuditLogSpec {
    * about per-resource decisions, so they look only at {@code decision=} records.
    */
   private List<LogEvent> decisions() {
-    return audit.events().stream()
-        .filter(
-            e -> e.getMessage().getFormattedMessage().startsWith("event=local_file_acl decision="))
-        .toList();
+    return audit.eventsWithPrefix(DECISION_PREFIX);
   }
 
   private LogEvent onlyDecision() {
