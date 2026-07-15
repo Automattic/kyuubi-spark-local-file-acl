@@ -78,8 +78,9 @@ public final class PolicyStore {
     long startNanos = System.nanoTime();
     AclState previous = state;
     // One id per reload, shared by the server log below and every audit record of this reload, so
-    // the two can be correlated even across same-digest reparses.
-    String reloadId = UUID.randomUUID().toString();
+    // the two can be correlated even across same-digest reparses. Generated fail-open: a UUID
+    // provider fault must not escape reloadNow and fail the request that triggered it.
+    String reloadId = newReloadId();
     AclPolicy activated;
     String activatedDigest;
     try {
@@ -125,6 +126,7 @@ public final class PolicyStore {
                 : AuditLog.ReloadOutcome.LOAD_FAILED;
         String oldDigest = previous instanceof AclState.Valid valid ? valid.digest() : null;
         emitReloadAudit(
+            reloadId,
             () ->
                 AuditLog.reload(
                     reloadId,
@@ -140,7 +142,18 @@ public final class PolicyStore {
     }
     // The policy is already published; audit emission (diff construction, the logging backend) runs
     // on its own failure boundary so a fault there cannot undo it or fail the triggering request.
-    emitReloadAudit(() -> auditActivation(reloadId, previous, activated, activatedDigest));
+    emitReloadAudit(
+        reloadId, () -> auditActivation(reloadId, previous, activated, activatedDigest));
+  }
+
+  /** A UUID provider failure must not break the request that triggered the reload. */
+  private static String newReloadId() {
+    try {
+      return UUID.randomUUID().toString();
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to generate a reload id; using a placeholder", e);
+      return "unknown";
+    }
   }
 
   private void auditActivation(
@@ -167,11 +180,14 @@ public final class PolicyStore {
     }
   }
 
-  private void emitReloadAudit(Runnable emit) {
+  private void emitReloadAudit(String reloadId, Runnable emit) {
     try {
       emit.run();
     } catch (RuntimeException e) {
-      LOG.warn("Failed to emit reload audit event; the published policy is unaffected", e);
+      LOG.warn(
+          "Failed to emit reload audit event (reload {}); the published policy is unaffected",
+          reloadId,
+          e);
     }
   }
 
