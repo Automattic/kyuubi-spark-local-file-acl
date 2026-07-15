@@ -1,5 +1,6 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.util.List;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,13 +49,20 @@ final class AuditLog {
 
   /** The kind of reload transition; each carries the level its event logs at. */
   enum ReloadOutcome {
-    LOADED, // initial load
+    LOADED, // initial load succeeded
     CHANGED, // a running policy was replaced
     RECOVERED, // a valid policy replaced an invalid one
-    INVALIDATED; // a running policy became invalid — revokes access, so it logs at WARN
+    INVALIDATED, // a running policy became invalid — revokes access, so it logs at WARN
+    LOAD_FAILED; // the initial load itself failed; no policy was ever active
 
+    /** Whether this transition takes access away from a policy that was serving requests. */
     boolean revokesAccess() {
       return this == INVALIDATED;
+    }
+
+    /** Whether this outcome is a failure and should log at WARN rather than INFO. */
+    boolean isFailure() {
+      return this == INVALIDATED || this == LOAD_FAILED;
     }
 
     String wire() {
@@ -64,8 +72,10 @@ final class AuditLog {
 
   /**
    * A policy lifecycle event on reload. {@code policy} is the newly published policy (null when a
-   * reload produced an invalid state); its counts describe the active policy. Multi-valued diff
-   * fields hold comma-joined identities.
+   * reload produced an invalid state); its counts describe the active policy. Each entry in {@code
+   * changes} is emitted as its own {@code local_file_acl_reload_change} record so a value
+   * containing a comma (both paths and principal names may) stays in a single escaped field and is
+   * never confused with a delimiter. The summary carries only the per-kind counts.
    */
   static void reload(
       ReloadOutcome outcome,
@@ -73,27 +83,46 @@ final class AuditLog {
       String oldDigest,
       String newDigest,
       AclPolicy policy,
-      AclPolicy.ReloadDiff diff,
+      List<AclPolicy.RuleChange> changes,
       String error) {
-    StringBuilder line = new StringBuilder(200);
-    line.append("event=local_file_acl_reload");
-    append(line, "outcome", outcome.wire());
-    append(line, "source", source);
-    append(line, "old_digest", oldDigest);
-    append(line, "new_digest", newDigest);
-    appendInt(line, "users", policy == null ? 0 : policy.userRules().size());
-    appendInt(line, "groups", policy == null ? 0 : policy.groupRules().size());
-    appendInt(line, "rules", policy == null ? 0 : policy.ruleCount());
-    appendInt(line, "unresolved", policy == null ? 0 : policy.unresolvedPaths().size());
-    append(line, "added", String.join(",", diff.addedRules()));
-    append(line, "removed", String.join(",", diff.removedRules()));
-    append(line, "resolved", String.join(",", diff.resolvedPaths()));
-    append(line, "pending", String.join(",", diff.pendingPaths()));
-    append(line, "error", error);
-    if (outcome.revokesAccess()) {
-      AUDIT.warn(line.toString());
+    StringBuilder summary = new StringBuilder(200);
+    summary.append("event=local_file_acl_reload");
+    append(summary, "outcome", outcome.wire());
+    append(summary, "source", source);
+    append(summary, "old_digest", oldDigest);
+    append(summary, "new_digest", newDigest);
+    appendInt(summary, "users", policy == null ? 0 : policy.userRules().size());
+    appendInt(summary, "groups", policy == null ? 0 : policy.groupRules().size());
+    appendInt(summary, "rules", policy == null ? 0 : policy.ruleCount());
+    appendInt(summary, "unresolved", policy == null ? 0 : policy.unresolvedPaths().size());
+    appendInt(summary, "added", count(changes, AclPolicy.ChangeKind.ADDED));
+    appendInt(summary, "removed", count(changes, AclPolicy.ChangeKind.REMOVED));
+    appendInt(summary, "resolved", count(changes, AclPolicy.ChangeKind.RESOLVED));
+    appendInt(summary, "pending", count(changes, AclPolicy.ChangeKind.PENDING));
+    append(summary, "error", error);
+    emit(outcome, summary.toString());
+
+    for (AclPolicy.RuleChange change : changes) {
+      StringBuilder detail = new StringBuilder(120);
+      detail.append("event=local_file_acl_reload_change");
+      append(detail, "outcome", outcome.wire());
+      append(detail, "change", change.kind().name().toLowerCase(Locale.ROOT));
+      append(detail, "type", change.type());
+      append(detail, "principal", change.principal());
+      append(detail, "pattern", change.pattern());
+      emit(outcome, detail.toString());
+    }
+  }
+
+  private static int count(List<AclPolicy.RuleChange> changes, AclPolicy.ChangeKind kind) {
+    return (int) changes.stream().filter(change -> change.kind() == kind).count();
+  }
+
+  private static void emit(ReloadOutcome outcome, String line) {
+    if (outcome.isFailure()) {
+      AUDIT.warn(line);
     } else {
-      AUDIT.info(line.toString());
+      AUDIT.info(line);
     }
   }
 

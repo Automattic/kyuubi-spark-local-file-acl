@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
@@ -75,6 +76,8 @@ public final class PolicyStore {
   private void reloadNow() {
     long startNanos = System.nanoTime();
     AclState previous = state;
+    AclPolicy activated;
+    String activatedDigest;
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
@@ -86,6 +89,8 @@ public final class PolicyStore {
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
+      activated = policy;
+      activatedDigest = digest;
       LOG.info(
           "Activated ACL policy from {}: {} users, {} groups, {} rules, {} unresolved, "
               + "digest {}, {} ms",
@@ -96,29 +101,33 @@ public final class PolicyStore {
           policy.unresolvedPaths().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
-      auditActivation(previous, policy, digest);
     } catch (Exception e) {
       // Suppress a repeated event while the policy stays invalid: only the transition into an
       // invalid state revokes access, and the WARN above already fires every interval.
-      boolean wasValidOrStartup = !(previous instanceof AclState.Invalid);
+      boolean wasInvalid = previous instanceof AclState.Invalid;
       state = new AclState.Invalid(e.getMessage());
       LOG.warn(
           "ACL policy at {} is invalid; local resources will be rejected until a valid "
               + "policy is installed",
           aclFile,
           e);
-      if (wasValidOrStartup) {
+      if (!wasInvalid) {
+        // A running policy became invalid, versus the initial load itself failing.
+        AuditLog.ReloadOutcome outcome =
+            previous instanceof AclState.Valid
+                ? AuditLog.ReloadOutcome.INVALIDATED
+                : AuditLog.ReloadOutcome.LOAD_FAILED;
         String oldDigest = previous instanceof AclState.Valid valid ? valid.digest() : null;
-        AuditLog.reload(
-            AuditLog.ReloadOutcome.INVALIDATED,
-            aclFile.toString(),
-            oldDigest,
-            null,
-            null,
-            AclPolicy.ReloadDiff.EMPTY,
-            e.getMessage());
+        emitReloadAudit(
+            () ->
+                AuditLog.reload(
+                    outcome, aclFile.toString(), oldDigest, null, null, List.of(), e.getMessage()));
       }
+      return;
     }
+    // The policy is already published; audit emission (diff construction, the logging backend) runs
+    // on its own failure boundary so a fault there cannot undo it or fail the triggering request.
+    emitReloadAudit(() -> auditActivation(previous, activated, activatedDigest));
   }
 
   private void auditActivation(AclState previous, AclPolicy policy, String digest) {
@@ -139,7 +148,15 @@ public final class PolicyStore {
           previous instanceof AclState.Invalid
               ? AuditLog.ReloadOutcome.RECOVERED
               : AuditLog.ReloadOutcome.LOADED;
-      AuditLog.reload(outcome, source, null, digest, policy, AclPolicy.ReloadDiff.EMPTY, null);
+      AuditLog.reload(outcome, source, null, digest, policy, List.of(), null);
+    }
+  }
+
+  private void emitReloadAudit(Runnable emit) {
+    try {
+      emit.run();
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to emit reload audit event; the published policy is unaffected", e);
     }
   }
 

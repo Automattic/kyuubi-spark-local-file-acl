@@ -12,7 +12,7 @@
         <Or>
             <Method name="userRules"/>
             <Method name="groupRules"/>
-            <Method name="unresolvedPaths"/>
+            <Method name="unresolvedRules"/>
         </Or>
         <Bug pattern="EI_EXPOSE_REP"/>
     </Match>

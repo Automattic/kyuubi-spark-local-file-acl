@@ -208,24 +208,33 @@ event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/e
 
 The same category also carries **policy lifecycle events**, so an operator can see when the ACL was
 loaded or changed alongside the decisions it drove. Each reload that changes the published policy
-emits one `event=local_file_acl_reload` record:
+emits one `event=local_file_acl_reload` summary, followed by one
+`event=local_file_acl_reload_change` record per changed rule:
 
 ```text
-event=local_file_acl_reload outcome="loaded" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="" new_digest="a1b2…" users=3 groups=2 rules=11 unresolved=1 added="" removed="" resolved="" pending="" error=""
-event=local_file_acl_reload outcome="changed" source="…" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added="user:alice:/opt/kyuubi/resources/alice/new.conf" removed="" resolved="/opt/kyuubi/certificates/prod.pem" pending="" error=""
+event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added=1 removed=0 resolved=1 pending=0 error=""
+event=local_file_acl_reload_change outcome="changed" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
+event=local_file_acl_reload_change outcome="changed" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
 ```
 
 - `outcome` is `loaded` (initial load), `changed` (a running policy was replaced), `recovered` (a
-  valid policy replaced an invalid one), or `invalidated` (a running policy became invalid — logged
-  at `WARN`, the others at `INFO`). An unchanged reload (same digest, nothing newly resolvable)
-  emits nothing, and while the policy stays invalid the event is not repeated every interval.
-- `added` / `removed` list the rule identities (`<type>:<principal>:<pattern>`) that a `changed`
-  reload gained or lost. `resolved` names exact paths that were missing and whose rule is now active
-  — the reactivation of an omitted rule (see below) shows up here even though the digest is
-  unchanged. `pending` names exact paths newly omitted for a missing file. Multi-valued fields are
-  comma-joined; the counts (`users`, `groups`, `rules`, `unresolved`) describe the new policy.
+  valid policy replaced an invalid one), `invalidated` (a running policy became invalid), or
+  `load_failed` (the initial load itself failed, so no policy was ever active). `invalidated` and
+  `load_failed` log at `WARN`, the rest at `INFO`. An unchanged reload (same digest, nothing newly
+  resolvable) emits nothing, and while the policy stays invalid the event is not repeated every
+  interval.
+- The summary carries the new policy's counts (`users`, `groups`, `rules`, `unresolved`) and the
+  number of changes of each kind (`added`, `removed`, `resolved`, `pending`). Only a `changed`
+  reload has non-zero change counts.
+- Each change is then a `change` record with a single-valued, escaped `pattern` (never a joined
+  list, so a path or principal containing a comma is unambiguous). `added` / `removed` cover any
+  rule — active or omitted for a missing file — so reassigning a still-missing rule between
+  principals is visible. `resolved` marks an omitted rule whose file appeared and is now active
+  (shown even though the digest is unchanged); `pending` marks a rule newly omitted for a missing
+  file.
 - Values are escaped exactly as decision records are, and the fixed `event=` prefixes
-  (`local_file_acl` vs `local_file_acl_reload`) let a parser separate the two streams.
+  (`local_file_acl`, `local_file_acl_reload`, `local_file_acl_reload_change`) let a parser separate
+  the streams.
 
 The plugin bundles no logging configuration. Route the category to its own file through Kyuubi's
 Log4j2 configuration (`$KYUUBI_CONF_DIR/log4j2.xml`), with additivity off so the records do not
