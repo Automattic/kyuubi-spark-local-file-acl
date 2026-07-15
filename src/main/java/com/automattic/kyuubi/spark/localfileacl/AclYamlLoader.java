@@ -210,18 +210,17 @@ public final class AclYamlLoader {
           "Unsupported ACL version '" + version + "'; expected " + SUPPORTED_VERSION);
     }
 
-    // Exact rules whose file is missing are omitted in lenient mode; the policy carries each such
-    // rule's identity and path so PolicyStore can reparse (and canonicalize) once its file appears
-    // and so a change to the omitted rule stays visible in the reload diff.
-    Set<AclPolicy.UnresolvedRule> unresolved = new LinkedHashSet<>();
+    // Exact rules whose file is missing are omitted in lenient mode; the policy carries their
+    // normalized paths so PolicyStore can reparse (and canonicalize) once such a file appears.
+    Set<Path> unresolved = new LinkedHashSet<>();
     return new AclPolicy(
-        parsePrincipals(rootMap.get("users"), "users", "user", unresolved),
-        parsePrincipals(rootMap.get("groups"), "groups", "group", unresolved),
+        parsePrincipals(rootMap.get("users"), "users", unresolved),
+        parsePrincipals(rootMap.get("groups"), "groups", unresolved),
         unresolved);
   }
 
   private Map<String, List<CompiledRule>> parsePrincipals(
-      Object section, String sectionName, String type, Set<AclPolicy.UnresolvedRule> unresolved) {
+      Object section, String sectionName, Set<Path> unresolved) {
     Map<String, List<CompiledRule>> compiled = new LinkedHashMap<>();
     if (section == null) {
       return compiled;
@@ -232,9 +231,7 @@ public final class AclYamlLoader {
           if (principal == null || principal.isBlank()) {
             throw new IllegalArgumentException("Blank principal name in '" + sectionName + "'");
           }
-          compiled.put(
-              principal,
-              compilePatterns(body, sectionName + "." + principal, type, principal, unresolved));
+          compiled.put(principal, compilePatterns(body, sectionName + "." + principal, unresolved));
         });
     return compiled;
   }
@@ -244,12 +241,7 @@ public final class AclYamlLoader {
    * allow list must be written explicitly ({@code alice: []}); a principal with no value at all is
    * a typo, not a policy, so it is rejected rather than read as "grants nothing".
    */
-  private List<CompiledRule> compilePatterns(
-      Object allow,
-      String owner,
-      String type,
-      String principal,
-      Set<AclPolicy.UnresolvedRule> unresolved) {
+  private List<CompiledRule> compilePatterns(Object allow, String owner, Set<Path> unresolved) {
     if (!(allow instanceof List<?> patterns)) {
       throw new IllegalArgumentException(owner + " must map to a list of patterns");
     }
@@ -259,15 +251,9 @@ public final class AclYamlLoader {
         throw new IllegalArgumentException("Non-string or blank pattern under " + owner);
       }
       String stripped = pattern.strip();
-      // An empty result means the exact rule was omitted for a missing file; record its identity
-      // here, where the principal and type are known, rather than threading them into the compiler.
+      // An empty result means the exact rule was omitted for a missing file.
       compilePattern(stripped, owner)
-          .ifPresentOrElse(
-              rules::add,
-              () ->
-                  unresolved.add(
-                      new AclPolicy.UnresolvedRule(
-                          type, principal, stripped, normalizedKey(stripped))));
+          .ifPresentOrElse(rules::add, () -> unresolved.add(normalizedKey(stripped)));
     }
     return rules;
   }

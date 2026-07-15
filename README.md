@@ -207,14 +207,12 @@ event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/e
   decision about them.
 
 The same category also carries **policy lifecycle events**, so an operator can see when the ACL was
-loaded or changed alongside the decisions it drove. Each reload that changes the published policy
-emits one `event=local_file_acl_reload_change` record per changed rule, followed by one
-`event=local_file_acl_reload` summary:
+loaded or changed alongside the decisions it drove. Each policy state transition emits one
+`event=local_file_acl_reload` record:
 
 ```text
-event=local_file_acl_reload_change reload_id="6f1c…" outcome="changed" new_digest="c3d4…" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
-event=local_file_acl_reload_change reload_id="6f1c…" outcome="changed" new_digest="c3d4…" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
-event=local_file_acl_reload reload_id="6f1c…" outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added=1 removed=0 resolved=1 pending=0 error=""
+event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 error=""
+event=local_file_acl_reload outcome="invalidated" source="…" old_digest="c3d4…" new_digest="" users=0 groups=0 rules=0 unresolved=0 error="Unsupported ACL version '3'; expected 2"
 ```
 
 - `outcome` is `loaded` (initial load), `changed` (a running policy was replaced), `recovered` (a
@@ -223,25 +221,14 @@ event=local_file_acl_reload reload_id="6f1c…" outcome="changed" source="/etc/k
   `load_failed` log at `WARN`, the rest at `INFO`. An unchanged reload (same digest, nothing newly
   resolvable) emits nothing, and while the policy stays invalid the event is not repeated every
   interval.
-- The detail records are emitted first and the summary last, so the summary is a completion marker:
-  a summary with `added=1` for a given `reload_id` is preceded by its one matching detail record.
-  A logging fault partway through leaves detail records with no summary — never a summary that
-  overcounts details. Every record of one reload shares a fresh `reload_id`, which is what
-  associates details with their summary; the digest is not sufficient, since same-content reparses
-  (a missing file resolving) and concurrent stores can emit different batches under one digest.
-- The summary carries the new policy's counts (`users`, `groups`, `rules`, `unresolved` — counted
-  per rule, so two principals sharing one missing path count as two) and the number of changes of
-  each kind (`added`, `removed`, `resolved`, `pending`). Only a `changed` reload has non-zero change
-  counts.
-- Each change record has a single-valued, escaped `pattern` (never a joined list, so a path or
-  principal containing a comma is unambiguous). Changes are matched by rule identity
-  (`type`+`principal`+`pattern`), not by path: `added` / `removed` cover any rule — active or
-  omitted for a missing file — so reassigning a still-missing rule between principals is visible;
-  `resolved` marks the specific omitted rule whose file appeared (shown even though the digest is
-  unchanged); `pending` marks a rule newly omitted for a missing file.
+- The record carries the new policy's counts (`users`, `groups`, `rules`, `unresolved`), the digest
+  transition, and, for the two failure outcomes, the `error`. A same-digest `changed` event whose
+  `unresolved` count dropped marks an omitted missing-file rule becoming active (see the hot-reload
+  section). Which exact rules changed is not audited here — that belongs in the ACL file's own
+  version-control history.
 - Values are escaped exactly as decision records are, and the fixed `event=` prefixes
-  (`local_file_acl`, `local_file_acl_reload`, `local_file_acl_reload_change`) let a parser separate
-  the streams.
+  (`local_file_acl` vs `local_file_acl_reload`) let a parser separate the decision and lifecycle
+  streams.
 
 The plugin bundles no logging configuration. Route the category to its own file through Kyuubi's
 Log4j2 configuration (`$KYUUBI_CONF_DIR/log4j2.xml`), with additivity off so the records do not
