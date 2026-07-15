@@ -98,7 +98,7 @@ public final class PolicyStore {
           policy.userRules().size(),
           policy.groupRules().size(),
           policy.ruleCount(),
-          policy.unresolvedPaths().size(),
+          policy.unresolvedRules().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
     } catch (Exception e) {

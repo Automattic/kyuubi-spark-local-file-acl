@@ -75,7 +75,14 @@ final class AuditLog {
    * reload produced an invalid state); its counts describe the active policy. Each entry in {@code
    * changes} is emitted as its own {@code local_file_acl_reload_change} record so a value
    * containing a comma (both paths and principal names may) stays in a single escaped field and is
-   * never confused with a delimiter. The summary carries only the per-kind counts.
+   * never confused with a delimiter.
+   *
+   * <p>The detail records are emitted first and the summary last, so the summary is a completion
+   * marker: a consumer that sees {@code added=3} for a given {@code new_digest} is guaranteed the
+   * three matching detail records preceded it. If emission fails partway (a logging backend fault,
+   * which the caller isolates) the reader is left with orphan details and no summary — never a
+   * summary that overcounts the details. Details repeat {@code new_digest} so they associate with
+   * their summary even when reloads interleave in the log.
    */
   static void reload(
       ReloadOutcome outcome,
@@ -85,6 +92,18 @@ final class AuditLog {
       AclPolicy policy,
       List<AclPolicy.RuleChange> changes,
       String error) {
+    for (AclPolicy.RuleChange change : changes) {
+      StringBuilder detail = new StringBuilder(120);
+      detail.append("event=local_file_acl_reload_change");
+      append(detail, "outcome", outcome.wire());
+      append(detail, "new_digest", newDigest);
+      append(detail, "change", change.kind().name().toLowerCase(Locale.ROOT));
+      append(detail, "type", change.type());
+      append(detail, "principal", change.principal());
+      append(detail, "pattern", change.pattern());
+      emit(outcome, detail.toString());
+    }
+
     StringBuilder summary = new StringBuilder(200);
     summary.append("event=local_file_acl_reload");
     append(summary, "outcome", outcome.wire());
@@ -94,24 +113,13 @@ final class AuditLog {
     appendInt(summary, "users", policy == null ? 0 : policy.userRules().size());
     appendInt(summary, "groups", policy == null ? 0 : policy.groupRules().size());
     appendInt(summary, "rules", policy == null ? 0 : policy.ruleCount());
-    appendInt(summary, "unresolved", policy == null ? 0 : policy.unresolvedPaths().size());
+    appendInt(summary, "unresolved", policy == null ? 0 : policy.unresolvedRules().size());
     appendInt(summary, "added", count(changes, AclPolicy.ChangeKind.ADDED));
     appendInt(summary, "removed", count(changes, AclPolicy.ChangeKind.REMOVED));
     appendInt(summary, "resolved", count(changes, AclPolicy.ChangeKind.RESOLVED));
     appendInt(summary, "pending", count(changes, AclPolicy.ChangeKind.PENDING));
     append(summary, "error", error);
     emit(outcome, summary.toString());
-
-    for (AclPolicy.RuleChange change : changes) {
-      StringBuilder detail = new StringBuilder(120);
-      detail.append("event=local_file_acl_reload_change");
-      append(detail, "outcome", outcome.wire());
-      append(detail, "change", change.kind().name().toLowerCase(Locale.ROOT));
-      append(detail, "type", change.type());
-      append(detail, "principal", change.principal());
-      append(detail, "pattern", change.pattern());
-      emit(outcome, detail.toString());
-    }
   }
 
   private static int count(List<AclPolicy.RuleChange> changes, AclPolicy.ChangeKind kind) {

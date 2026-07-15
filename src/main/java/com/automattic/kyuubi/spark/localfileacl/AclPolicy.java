@@ -3,7 +3,6 @@ package com.automattic.kyuubi.spark.localfileacl;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -78,32 +77,30 @@ public record AclPolicy(
    * moves between principals while its file stays missing still appears as a remove plus an add.
    */
   public static List<RuleChange> diff(AclPolicy before, AclPolicy after) {
-    Set<RuleRef> beforeRefs = before.allRuleRefs();
-    Set<RuleRef> afterRefs = after.allRuleRefs();
-    Set<Path> beforeUnresolvedKeys = before.unresolvedKeys();
-    Set<Path> afterUnresolvedKeys = after.unresolvedKeys();
-    Set<Path> afterActiveKeys = after.activeExactKeys();
+    Set<RuleRef> beforeAll = before.allRuleRefs();
+    Set<RuleRef> afterAll = after.allRuleRefs();
+    Set<RuleRef> afterActive = after.activeRuleRefs();
+    Set<RuleRef> beforeUnresolved = before.unresolvedRefs();
 
     List<RuleChange> changes = new ArrayList<>();
-    afterRefs.stream()
-        .filter(ref -> !beforeRefs.contains(ref))
+    afterAll.stream()
+        .filter(ref -> !beforeAll.contains(ref))
         .sorted(RULE_REF_ORDER)
         .forEach(ref -> changes.add(change(ChangeKind.ADDED, ref)));
-    beforeRefs.stream()
-        .filter(ref -> !afterRefs.contains(ref))
+    beforeAll.stream()
+        .filter(ref -> !afterAll.contains(ref))
         .sorted(RULE_REF_ORDER)
         .forEach(ref -> changes.add(change(ChangeKind.REMOVED, ref)));
-    // Resolved: an omitted rule whose file appeared — its key left the unresolved set and now backs
-    // an active rule (a key that merely left because the rule was deleted does not count).
+    // Resolved: this exact omitted rule is now active because its file appeared. Matched by rule
+    // identity, not by path — if a different principal's rule for the same path was removed, that
+    // is a removal, not a resolution of this one.
     before.unresolvedRules.stream()
-        .filter(
-            rule ->
-                !afterUnresolvedKeys.contains(rule.key()) && afterActiveKeys.contains(rule.key()))
+        .filter(rule -> afterActive.contains(ref(rule)))
         .sorted(UNRESOLVED_ORDER)
         .forEach(rule -> changes.add(change(ChangeKind.RESOLVED, rule)));
-    // Pending: a rule newly omitted for a missing file.
+    // Pending: this exact rule is omitted now and was not omitted before (again by identity).
     after.unresolvedRules.stream()
-        .filter(rule -> !beforeUnresolvedKeys.contains(rule.key()))
+        .filter(rule -> !beforeUnresolved.contains(ref(rule)))
         .sorted(UNRESOLVED_ORDER)
         .forEach(rule -> changes.add(change(ChangeKind.PENDING, rule)));
     return changes;
@@ -127,7 +124,17 @@ public record AclPolicy(
     return new RuleChange(kind, rule.type(), rule.principal(), rule.pattern());
   }
 
+  private static RuleRef ref(UnresolvedRule rule) {
+    return new RuleRef(rule.type(), rule.principal(), rule.pattern());
+  }
+
   private Set<RuleRef> allRuleRefs() {
+    Set<RuleRef> refs = activeRuleRefs();
+    refs.addAll(unresolvedRefs());
+    return refs;
+  }
+
+  private Set<RuleRef> activeRuleRefs() {
     Set<RuleRef> refs = new LinkedHashSet<>();
     userRules.forEach(
         (principal, rules) ->
@@ -135,41 +142,18 @@ public record AclPolicy(
     groupRules.forEach(
         (principal, rules) ->
             rules.forEach(rule -> refs.add(new RuleRef("group", principal, rule.patternText()))));
-    unresolvedRules.forEach(
-        rule -> refs.add(new RuleRef(rule.type(), rule.principal(), rule.pattern())));
     return refs;
   }
 
-  private Set<Path> unresolvedKeys() {
-    Set<Path> keys = new HashSet<>();
-    unresolvedRules.forEach(rule -> keys.add(rule.key()));
-    return keys;
-  }
-
-  private Set<Path> activeExactKeys() {
-    Set<Path> keys = new HashSet<>();
-    collectExactKeys(userRules, keys);
-    collectExactKeys(groupRules, keys);
-    return keys;
-  }
-
-  private static void collectExactKeys(Map<String, List<CompiledRule>> rules, Set<Path> collected) {
-    rules
-        .values()
-        .forEach(
-            principalRules ->
-                principalRules.forEach(
-                    rule -> {
-                      if (rule instanceof CompiledRule.Exact exact) {
-                        collected.add(unresolvedKey(exact.patternText()));
-                      }
-                    }));
+  private Set<RuleRef> unresolvedRefs() {
+    Set<RuleRef> refs = new LinkedHashSet<>();
+    unresolvedRules.forEach(rule -> refs.add(ref(rule)));
+    return refs;
   }
 
   /**
-   * The single definition of how an exact pattern is keyed for missing-file tracking. Both the
-   * loader (which populates {@link #unresolvedRules()}) and {@link #diff} key on this, so the
-   * "resolved" detection cannot silently drift from how the omitted rules were keyed.
+   * The single definition of how an exact pattern is keyed for missing-file tracking, used by the
+   * loader to populate {@link #unresolvedRules()} and by {@link PolicyStore} to re-resolve them.
    */
   static Path unresolvedKey(String pattern) {
     return Path.of(pattern).normalize();

@@ -212,9 +212,9 @@ emits one `event=local_file_acl_reload` summary, followed by one
 `event=local_file_acl_reload_change` record per changed rule:
 
 ```text
+event=local_file_acl_reload_change outcome="changed" new_digest="c3d4…" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
+event=local_file_acl_reload_change outcome="changed" new_digest="c3d4…" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
 event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added=1 removed=0 resolved=1 pending=0 error=""
-event=local_file_acl_reload_change outcome="changed" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
-event=local_file_acl_reload_change outcome="changed" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
 ```
 
 - `outcome` is `loaded` (initial load), `changed` (a running policy was replaced), `recovered` (a
@@ -223,15 +223,21 @@ event=local_file_acl_reload_change outcome="changed" change="resolved" type="gro
   `load_failed` log at `WARN`, the rest at `INFO`. An unchanged reload (same digest, nothing newly
   resolvable) emits nothing, and while the policy stays invalid the event is not repeated every
   interval.
-- The summary carries the new policy's counts (`users`, `groups`, `rules`, `unresolved`) and the
-  number of changes of each kind (`added`, `removed`, `resolved`, `pending`). Only a `changed`
-  reload has non-zero change counts.
-- Each change is then a `change` record with a single-valued, escaped `pattern` (never a joined
-  list, so a path or principal containing a comma is unambiguous). `added` / `removed` cover any
-  rule — active or omitted for a missing file — so reassigning a still-missing rule between
-  principals is visible. `resolved` marks an omitted rule whose file appeared and is now active
-  (shown even though the digest is unchanged); `pending` marks a rule newly omitted for a missing
-  file.
+- The detail records are emitted first and the summary last, so the summary is a completion marker:
+  a summary with `added=1` for a given `new_digest` is preceded by its one matching detail record.
+  A logging fault partway through leaves detail records with no summary — never a summary that
+  overcounts details. The detail records repeat `new_digest` so they associate with their summary
+  even when reloads interleave.
+- The summary carries the new policy's counts (`users`, `groups`, `rules`, `unresolved` — counted
+  per rule, so two principals sharing one missing path count as two) and the number of changes of
+  each kind (`added`, `removed`, `resolved`, `pending`). Only a `changed` reload has non-zero change
+  counts.
+- Each change record has a single-valued, escaped `pattern` (never a joined list, so a path or
+  principal containing a comma is unambiguous). Changes are matched by rule identity
+  (`type`+`principal`+`pattern`), not by path: `added` / `removed` cover any rule — active or
+  omitted for a missing file — so reassigning a still-missing rule between principals is visible;
+  `resolved` marks the specific omitted rule whose file appeared (shown even though the digest is
+  unchanged); `pending` marks a rule newly omitted for a missing file.
 - Values are escaped exactly as decision records are, and the fixed `event=` prefixes
   (`local_file_acl`, `local_file_acl_reload`, `local_file_acl_reload_change`) let a parser separate
   the streams.

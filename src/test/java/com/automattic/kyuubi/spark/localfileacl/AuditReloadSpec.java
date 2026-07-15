@@ -198,6 +198,83 @@ class AuditReloadSpec {
     assertEquals("alice", removed.get("principal"));
   }
 
+  private String allowTwo(String p1, String p2, Path shared) {
+    return "version: 2\nusers:\n  "
+        + p1
+        + ":\n    - '"
+        + shared
+        + "'\n  "
+        + p2
+        + ":\n    - '"
+        + shared
+        + "'\n";
+  }
+
+  @Test
+  void aSharedMissingPathResolvesOnlyTheRuleThatStayed() throws Exception {
+    // Finding 1: two principals reference the same missing path. When the file appears and one of
+    // the two rules is removed, only the surviving rule is resolved — matching must be by identity,
+    // not by the shared path.
+    Path shared = root.resolve("shared.conf");
+    TestSupport.writeAcl(aclFile, allowTwo("alice", "bob", shared));
+    PolicyStore store = load(lenient());
+    assertEquals("2", lastSummary().get("unresolved"));
+
+    Files.writeString(shared, "x");
+    TestSupport.writeAcl(aclFile, allowFor("alice", shared));
+    tick();
+    store.maybeReload();
+
+    Map<String, String> summary = lastSummary();
+    assertEquals("1", summary.get("resolved"));
+    assertEquals("1", summary.get("removed"));
+    assertEquals("alice", change("resolved", shared.toString()).orElseThrow().get("principal"));
+    assertEquals("bob", change("removed", shared.toString()).orElseThrow().get("principal"));
+    // bob's rule was removed, not resolved.
+    assertTrue(
+        changeRecords().stream()
+            .noneMatch(r -> r.get("change").equals("resolved") && r.get("principal").equals("bob")),
+        changeRecords().toString());
+  }
+
+  @Test
+  void addingAnUnresolvedPrincipalForAnAlreadyMissingPathIsAddedAndPending() throws Exception {
+    // Finding 1 (converse): a second principal for an already-omitted path must register as both a
+    // new rule and a newly omitted one, not vanish because the path was already unresolved.
+    Path shared = root.resolve("shared.conf");
+    TestSupport.writeAcl(aclFile, allowFor("alice", shared));
+    PolicyStore store = load(lenient());
+    assertEquals("1", lastSummary().get("unresolved"));
+
+    TestSupport.writeAcl(aclFile, allowTwo("alice", "bob", shared));
+    tick();
+    store.maybeReload();
+
+    Map<String, String> summary = lastSummary();
+    assertEquals("1", summary.get("added"));
+    assertEquals("1", summary.get("pending"));
+    assertEquals("bob", change("added", shared.toString()).orElseThrow().get("principal"));
+    assertEquals("bob", change("pending", shared.toString()).orElseThrow().get("principal"));
+  }
+
+  @Test
+  void detailRecordsPrecedeTheSummaryAndShareItsDigest() throws Exception {
+    // Finding 2: the summary is a completion marker, emitted after its detail records, which repeat
+    // its new_digest for association.
+    TestSupport.writeAcl(aclFile, allow(fileA));
+    PolicyStore store = load(strict());
+    TestSupport.writeAcl(aclFile, allow(fileB));
+    tick();
+    store.maybeReload();
+
+    LogEvent last = audit.events().get(audit.events().size() - 1);
+    Map<String, String> summary = TestSupport.parseLogfmt(last.getMessage().getFormattedMessage());
+    assertTrue(last.getMessage().getFormattedMessage().startsWith(SUMMARY_PREFIX));
+    assertEquals("changed", summary.get("outcome"));
+    Map<String, String> added = change("added", fileB.toString()).orElseThrow();
+    assertEquals(summary.get("new_digest"), added.get("new_digest"));
+  }
+
   @Test
   void aCommaInAPathStaysInOneField() throws Exception {
     // P2c: commas are legal in paths; a detail record keeps the whole path in one escaped field
