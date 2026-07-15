@@ -206,6 +206,30 @@ event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/e
   a fabricated record. Remote URIs and unpoliced keys produce no records — the plugin makes no
   decision about them.
 
+The same category also carries **policy lifecycle events**, so an operator can see when the ACL was
+loaded or changed alongside the decisions it drove. Each policy state transition emits one
+`event=local_file_acl_reload` record:
+
+```text
+event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 error=""
+event=local_file_acl_reload outcome="invalidated" source="…" old_digest="c3d4…" new_digest="" users=0 groups=0 rules=0 unresolved=0 error="Unsupported ACL version '3'; expected 2"
+```
+
+- `outcome` is `loaded` (initial load), `changed` (a running policy was replaced), `recovered` (a
+  valid policy replaced an invalid one), `invalidated` (a running policy became invalid), or
+  `load_failed` (the initial load itself failed, so no policy was ever active). `invalidated` and
+  `load_failed` log at `WARN`, the rest at `INFO`. An unchanged reload (same digest, nothing newly
+  resolvable) emits nothing, and while the policy stays invalid the event is not repeated every
+  interval.
+- The record carries the new policy's counts (`users`, `groups`, `rules`, `unresolved`), the digest
+  transition, and, for the two failure outcomes, the `error`. A same-digest `changed` event whose
+  `unresolved` count dropped marks an omitted missing-file rule becoming active (see the hot-reload
+  section). Which exact rules changed is not audited here — that belongs in the ACL file's own
+  version-control history.
+- Values are escaped exactly as decision records are, and the fixed `event=` prefixes
+  (`local_file_acl` vs `local_file_acl_reload`) let a parser separate the decision and lifecycle
+  streams.
+
 The plugin bundles no logging configuration. Route the category to its own file through Kyuubi's
 Log4j2 configuration (`$KYUUBI_CONF_DIR/log4j2.xml`), with additivity off so the records do not
 also land in the server log:

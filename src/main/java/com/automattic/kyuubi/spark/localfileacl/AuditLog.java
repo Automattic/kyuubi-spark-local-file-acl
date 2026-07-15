@@ -1,5 +1,6 @@
 package com.automattic.kyuubi.spark.localfileacl;
 
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +46,56 @@ final class AuditLog {
     AUDIT.warn(record("DENY", user, key, resource, reason, "", "", ""));
   }
 
+  /** The kind of reload transition; each carries the level its event logs at. */
+  enum ReloadOutcome {
+    LOADED, // initial load succeeded
+    CHANGED, // a running policy was replaced
+    RECOVERED, // a valid policy replaced an invalid one
+    INVALIDATED, // a running policy became invalid — logs at WARN
+    LOAD_FAILED; // the initial load itself failed; no policy was ever active
+
+    /** Whether this outcome is a failure and should log at WARN rather than INFO. */
+    boolean isFailure() {
+      return this == INVALIDATED || this == LOAD_FAILED;
+    }
+
+    String wire() {
+      return name().toLowerCase(Locale.ROOT);
+    }
+  }
+
+  /**
+   * A policy lifecycle event on reload: one record per state transition. {@code policy} is the
+   * newly published policy (null when a reload produced an invalid state); its counts describe the
+   * active policy. A same-digest {@code changed} event whose {@code unresolved} count dropped marks
+   * an omitted missing-file rule becoming active. Which exact rules changed is not audited here —
+   * that belongs in the configuration's own version-control trail.
+   */
+  static void reload(
+      ReloadOutcome outcome,
+      String source,
+      String oldDigest,
+      String newDigest,
+      AclPolicy policy,
+      String error) {
+    StringBuilder summary = new StringBuilder(200);
+    summary.append("event=local_file_acl_reload");
+    append(summary, "outcome", outcome.wire());
+    append(summary, "source", source);
+    append(summary, "old_digest", oldDigest);
+    append(summary, "new_digest", newDigest);
+    appendInt(summary, "users", policy == null ? 0 : policy.userRules().size());
+    appendInt(summary, "groups", policy == null ? 0 : policy.groupRules().size());
+    appendInt(summary, "rules", policy == null ? 0 : policy.ruleCount());
+    appendInt(summary, "unresolved", policy == null ? 0 : policy.unresolvedPaths().size());
+    append(summary, "error", error);
+    if (outcome.isFailure()) {
+      AUDIT.warn(summary.toString());
+    } else {
+      AUDIT.info(summary.toString());
+    }
+  }
+
   private static String record(
       String decision,
       String user,
@@ -64,6 +115,10 @@ final class AuditLog {
     append(line, "principal", principal);
     append(line, "pattern", pattern);
     return line.toString();
+  }
+
+  private static void appendInt(StringBuilder line, String field, int value) {
+    line.append(' ').append(field).append('=').append(value);
   }
 
   private static void append(StringBuilder line, String field, String value) {

@@ -5,8 +5,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.Groups;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -16,12 +20,41 @@ final class TestSupport {
   static final Set<PosixFilePermission> OWNER_ONLY =
       Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
 
+  /** One field of a logfmt record: {@code key=value} or {@code key="quoted, escaped value"}. */
+  private static final Pattern LOGFMT_FIELD =
+      Pattern.compile("(\\w+)=(?:\"((?:[^\"\\\\]|\\\\.)*)\"|(\\S+))");
+
   private TestSupport() {}
+
+  /** Parses an audit logfmt line into its fields, the way an operator's log pipeline would. */
+  static Map<String, String> parseLogfmt(String record) {
+    Map<String, String> parsed = new LinkedHashMap<>();
+    Matcher matcher = LOGFMT_FIELD.matcher(record);
+    while (matcher.find()) {
+      parsed.put(matcher.group(1), matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
+    }
+    return parsed;
+  }
 
   /** Writes the ACL with owner-only permissions, as the loader's file check requires. */
   static void writeAcl(Path file, String yaml) throws IOException {
     Files.writeString(file, yaml);
     Files.setPosixFilePermissions(file, OWNER_ONLY);
+  }
+
+  /**
+   * A version-2 ACL document granting each principal in {@code rules} its listed paths. Principals
+   * are emitted in the map's iteration order; pass a {@link java.util.LinkedHashMap} when that
+   * order matters (it does not affect parsing).
+   */
+  static String usersAcl(Map<String, List<Path>> rules) {
+    StringBuilder yaml = new StringBuilder("version: 2\nusers:\n");
+    rules.forEach(
+        (principal, paths) -> {
+          yaml.append("  ").append(principal).append(":\n");
+          paths.forEach(path -> yaml.append("    - '").append(path).append("'\n"));
+        });
+    return yaml.toString();
   }
 
   /**

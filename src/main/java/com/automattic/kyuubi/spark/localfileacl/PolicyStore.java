@@ -74,10 +74,13 @@ public final class PolicyStore {
 
   private void reloadNow() {
     long startNanos = System.nanoTime();
+    AclState previous = state;
+    AclPolicy activated;
+    String activatedDigest;
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
-      if (state instanceof AclState.Valid valid
+      if (previous instanceof AclState.Valid valid
           && digest.equals(valid.digest())
           && !anyUnresolvedPathResolvable(valid.policy())) {
         LOG.debug("ACL digest unchanged ({}); skipping reparse", digest);
@@ -85,6 +88,8 @@ public final class PolicyStore {
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
+      activated = policy;
+      activatedDigest = digest;
       LOG.info(
           "Activated ACL policy from {}: {} users, {} groups, {} rules, {} unresolved, "
               + "digest {}, {} ms",
@@ -102,7 +107,49 @@ public final class PolicyStore {
               + "policy is installed",
           aclFile,
           e);
+      auditReload(previous, null, null, e.getMessage());
+      return;
     }
+    // Post-commit, and outside the load try/catch on purpose: nothing here — not even the audit
+    // helper's own failure-reporting log — may fall into that catch and undo the published policy.
+    auditReload(previous, activated, activatedDigest, null);
+  }
+
+  /**
+   * Emits the lifecycle event for the transition just applied. A null {@code policy} means the
+   * reload failed. {@code AuditLog.reload} is post-commit, so a logging fault must not undo the
+   * published state or fail the triggering request.
+   */
+  private void auditReload(AclState previous, AclPolicy policy, String newDigest, String error) {
+    boolean success = policy != null;
+    // Stay quiet while the policy stays invalid: only the transition into invalid revokes access,
+    // and the WARN in reloadNow already fires every interval.
+    if (!success && previous instanceof AclState.Invalid) {
+      return;
+    }
+    String oldDigest = previous instanceof AclState.Valid valid ? valid.digest() : null;
+    try {
+      AuditLog.reload(
+          classify(previous, success), aclFile.toString(), oldDigest, newDigest, policy, error);
+    } catch (RuntimeException e) {
+      LOG.warn("Failed to emit reload audit event; the published policy is unaffected", e);
+    }
+  }
+
+  private static AuditLog.ReloadOutcome classify(AclState previous, boolean success) {
+    if (success) {
+      if (previous instanceof AclState.Valid) {
+        return AuditLog.ReloadOutcome.CHANGED;
+      }
+      return previous instanceof AclState.Invalid
+          ? AuditLog.ReloadOutcome.RECOVERED
+          : AuditLog.ReloadOutcome.LOADED;
+    }
+    // A running policy became invalid, versus the initial load itself failing (Invalid → Invalid is
+    // suppressed before we get here).
+    return previous instanceof AclState.Valid
+        ? AuditLog.ReloadOutcome.INVALIDATED
+        : AuditLog.ReloadOutcome.LOAD_FAILED;
   }
 
   /**

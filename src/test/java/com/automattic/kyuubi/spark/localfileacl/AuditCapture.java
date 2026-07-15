@@ -3,48 +3,35 @@ package com.automattic.kyuubi.spark.localfileacl;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.config.LoggerConfig;
 import org.apache.logging.log4j.core.config.Property;
 
-/**
- * Attaches an in-memory appender to the dedicated audit category (non-additive, so records never
- * reach the console) and collects the emitted events. Kyuubi's logging backend is Log4j2, which is
- * what an operator routes this category with.
- */
-final class AuditCapture implements AutoCloseable {
+/** Captures the events emitted on the audit category during a test. */
+final class AuditCapture extends AuditAppenderHarness {
 
-  private final ListAppender appender = new ListAppender();
+  private final ListAppender appender;
 
   AuditCapture() {
-    appender.start();
-    LoggerContext context = (LoggerContext) LogManager.getContext(false);
-    Configuration configuration = context.getConfiguration();
-    configuration.addAppender(appender);
-    LoggerConfig loggerConfig = new LoggerConfig(AuditLog.LOGGER_NAME, Level.ALL, false);
-    loggerConfig.addAppender(appender, Level.ALL, null);
-    configuration.addLogger(AuditLog.LOGGER_NAME, loggerConfig);
-    context.updateLoggers();
+    this(new ListAppender());
   }
 
-  /** Removes the appender from the configuration too, so specs do not accumulate stale ones. */
-  @Override
-  public void close() {
-    LoggerContext context = (LoggerContext) LogManager.getContext(false);
-    Configuration configuration = context.getConfiguration();
-    configuration.removeLogger(AuditLog.LOGGER_NAME);
-    configuration.getAppenders().remove(appender.getName());
-    context.updateLoggers();
-    appender.stop();
+  private AuditCapture(ListAppender appender) {
+    super(appender);
+    this.appender = appender;
   }
 
   List<LogEvent> events() {
     return List.copyOf(appender.events);
+  }
+
+  /**
+   * The category carries decision and reload events; callers select one kind by its wire prefix.
+   */
+  List<LogEvent> eventsWithPrefix(String prefix) {
+    return events().stream()
+        .filter(event -> event.getMessage().getFormattedMessage().startsWith(prefix))
+        .toList();
   }
 
   LogEvent onlyEvent() {

@@ -8,13 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.apache.kyuubi.KyuubiException;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.LogEvent;
@@ -26,8 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 /** The audit stream operators pull: exactly one record per decision, on a fixed, safe schema. */
 class AuditLogSpec {
 
-  private static final Pattern FIELD =
-      Pattern.compile("(\\w+)=(?:\"((?:[^\"\\\\]|\\\\.)*)\"|(\\S+))");
+  private static final String DECISION_PREFIX = "event=local_file_acl decision=";
 
   @TempDir Path tempDir;
 
@@ -79,25 +75,37 @@ class AuditLogSpec {
     return user -> Set.of(names);
   }
 
-  /** Parses one logfmt record into its fields, the way an operator's log pipeline would. */
   private static Map<String, String> fields(String record) {
-    assertTrue(record.startsWith("event=local_file_acl decision="), record);
-    Map<String, String> parsed = new LinkedHashMap<>();
-    Matcher matcher = FIELD.matcher(record);
-    while (matcher.find()) {
-      parsed.put(matcher.group(1), matcher.group(2) != null ? matcher.group(2) : matcher.group(3));
+    assertTrue(record.startsWith(DECISION_PREFIX), record);
+    return TestSupport.parseLogfmt(record);
+  }
+
+  /**
+   * The audit category also carries reload lifecycle events (loaded/changed/...); these tests are
+   * about per-resource decisions, so they look only at {@code decision=} records.
+   */
+  private List<LogEvent> decisions() {
+    return audit.eventsWithPrefix(DECISION_PREFIX);
+  }
+
+  private LogEvent onlyDecision() {
+    List<LogEvent> decisions = decisions();
+    if (decisions.size() != 1) {
+      throw new AssertionError(
+          "expected exactly one decision but got "
+              + decisions.stream().map(e -> e.getMessage().getFormattedMessage()).toList());
     }
-    return parsed;
+    return decisions.get(0);
   }
 
   private Map<String, String> onlyRecord(Level expectedLevel) {
-    LogEvent event = audit.onlyEvent();
+    LogEvent event = onlyDecision();
     assertEquals(expectedLevel, event.getLevel());
     return fields(event.getMessage().getFormattedMessage());
   }
 
-  private static Map<String, String> recordAt(AuditCapture audit, int index, Level expectedLevel) {
-    LogEvent event = audit.events().get(index);
+  private Map<String, String> recordAt(int index, Level expectedLevel) {
+    LogEvent event = decisions().get(index);
     assertEquals(expectedLevel, event.getLevel());
     return fields(event.getMessage().getFormattedMessage());
   }
@@ -154,7 +162,7 @@ class AuditLogSpec {
             engine(groups())
                 .validate("alice", TestSupport.uploadedConf(batchId, otherBatch.toString())));
 
-    Map<String, String> deny = recordAt(audit, 1, Level.WARN);
+    Map<String, String> deny = recordAt(1, Level.WARN);
     assertEquals("DENY", deny.get("decision"));
     assertEquals("cross-batch-upload", deny.get("reason"));
     assertEquals(otherBatch.toString(), deny.get("resource"));
@@ -230,7 +238,7 @@ class AuditLogSpec {
             Map.of(
                 "spark.files", "hdfs://nn/x.jar,s3a://bucket/y.jar",
                 "spark.executor.memory", "4g"));
-    assertTrue(audit.events().isEmpty(), audit.messages().toString());
+    assertTrue(decisions().isEmpty(), audit.messages().toString());
   }
 
   @Test
@@ -245,10 +253,10 @@ class AuditLogSpec {
 
     // The authorized entry ahead of the denial is audited; validation stops at the denial, so the
     // trailing entry — never evaluated — gets no fabricated decision.
-    List<LogEvent> events = audit.events();
+    List<LogEvent> events = decisions();
     assertEquals(2, events.size(), audit.messages().toString());
-    assertEquals("ALLOW", recordAt(audit, 0, Level.INFO).get("decision"));
-    Map<String, String> deny = recordAt(audit, 1, Level.WARN);
+    assertEquals("ALLOW", recordAt(0, Level.INFO).get("decision"));
+    Map<String, String> deny = recordAt(1, Level.WARN);
     assertEquals("DENY", deny.get("decision"));
     assertEquals(secretFile.toString(), deny.get("resource"));
   }
@@ -263,7 +271,7 @@ class AuditLogSpec {
         KyuubiException.class,
         () -> engine(groups()).validate(user, Map.of("spark.files", secretFile.toString())));
 
-    String record = audit.onlyMessage();
+    String record = onlyDecision().getMessage().getFormattedMessage();
     assertFalse(record.contains("\n"), record);
     assertFalse(record.contains("\r"), record);
     assertFalse(record.contains(bel), record);
@@ -286,7 +294,7 @@ class AuditLogSpec {
         KyuubiException.class,
         () -> engine(groups()).validate(user, Map.of("spark.files", secretFile.toString())));
 
-    String record = audit.onlyMessage();
+    String record = onlyDecision().getMessage().getFormattedMessage();
     assertFalse(record.contains(nextLine), record);
     assertFalse(record.contains(lineSeparator), record);
     assertFalse(record.contains(paragraphSeparator), record);
