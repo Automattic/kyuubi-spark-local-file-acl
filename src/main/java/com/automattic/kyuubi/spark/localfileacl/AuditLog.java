@@ -2,7 +2,6 @@ package com.automattic.kyuubi.spark.localfileacl;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,11 +55,6 @@ final class AuditLog {
     INVALIDATED, // a running policy became invalid — revokes access, so it logs at WARN
     LOAD_FAILED; // the initial load itself failed; no policy was ever active
 
-    /** Whether this transition takes access away from a policy that was serving requests. */
-    boolean revokesAccess() {
-      return this == INVALIDATED;
-    }
-
     /** Whether this outcome is a failure and should log at WARN rather than INFO. */
     boolean isFailure() {
       return this == INVALIDATED || this == LOAD_FAILED;
@@ -82,11 +76,12 @@ final class AuditLog {
    * marker: a consumer that sees {@code added=3} for a given {@code reload_id} is guaranteed the
    * three matching detail records preceded it. If emission fails partway (a logging backend fault,
    * which the caller isolates) the reader is left with orphan details and no summary — never a
-   * summary that overcounts the details. Every record of one reload carries the same fresh {@code
-   * reload_id}, so details associate with their summary even when same-content reparses or
-   * concurrent stores emit records with the same digest and they interleave in the log.
+   * summary that overcounts the details. The caller supplies one {@code reloadId} per reload so
+   * every record of that reload — and the caller's own server-log lines — share it, associating
+   * them even when same-content reparses or concurrent stores emit records under the same digest.
    */
   static void reload(
+      String reloadId,
       ReloadOutcome outcome,
       String source,
       String oldDigest,
@@ -94,7 +89,6 @@ final class AuditLog {
       AclPolicy policy,
       List<AclPolicy.RuleChange> changes,
       String error) {
-    String reloadId = UUID.randomUUID().toString();
     for (AclPolicy.RuleChange change : changes) {
       StringBuilder detail = new StringBuilder(120);
       detail.append("event=local_file_acl_reload_change");

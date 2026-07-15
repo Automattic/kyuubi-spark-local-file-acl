@@ -258,7 +258,16 @@ public final class AclYamlLoader {
       if (!(patternObject instanceof String pattern) || pattern.isBlank()) {
         throw new IllegalArgumentException("Non-string or blank pattern under " + owner);
       }
-      compilePattern(pattern.strip(), owner, type, principal, unresolved).ifPresent(rules::add);
+      String stripped = pattern.strip();
+      // An empty result means the exact rule was omitted for a missing file; record its identity
+      // here, where the principal and type are known, rather than threading them into the compiler.
+      compilePattern(stripped, owner)
+          .ifPresentOrElse(
+              rules::add,
+              () ->
+                  unresolved.add(
+                      new AclPolicy.UnresolvedRule(
+                          type, principal, stripped, normalizedKey(stripped))));
     }
     return rules;
   }
@@ -266,12 +275,7 @@ public final class AclYamlLoader {
   /**
    * Empty when the rule is omitted: a missing exact file while {@code failOnMissingFiles} is off.
    */
-  private Optional<CompiledRule> compilePattern(
-      String pattern,
-      String owner,
-      String type,
-      String principal,
-      Set<AclPolicy.UnresolvedRule> unresolved) {
+  private Optional<CompiledRule> compilePattern(String pattern, String owner) {
     if (pattern.matches("^[A-Za-z][A-Za-z0-9+.\\-]*:.*")) {
       throw new IllegalArgumentException(
           "Pattern '"
@@ -312,8 +316,7 @@ public final class AclYamlLoader {
       return Optional.of(new CompiledRule.Glob(pattern, matcher));
     }
     Path patternPath = Path.of(pattern);
-    Path normalized = AclPolicy.unresolvedKey(pattern);
-    rejectUploadRootTarget(normalized, pattern, owner);
+    rejectUploadRootTarget(normalizedKey(pattern), pattern, owner);
     Path canonical;
     try {
       canonical = patternPath.toRealPath();
@@ -328,13 +331,20 @@ public final class AclYamlLoader {
               + "from the active policy and authorizes nothing until the file appears",
           pattern,
           owner);
-      unresolved.add(new AclPolicy.UnresolvedRule(type, principal, pattern, normalized));
       return Optional.empty();
     } catch (IOException e) {
       throw missingExactFile(pattern, owner, e);
     }
     rejectUploadRootTarget(canonical, pattern, owner);
     return Optional.of(new CompiledRule.Exact(pattern, canonical));
+  }
+
+  /**
+   * How an exact pattern is keyed for missing-file tracking (matches {@code toRealPath} on the same
+   * absolute path once its file exists).
+   */
+  private static Path normalizedKey(String pattern) {
+    return Path.of(pattern).normalize();
   }
 
   private static IllegalArgumentException missingExactFile(

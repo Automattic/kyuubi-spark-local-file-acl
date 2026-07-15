@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,11 +58,7 @@ class AuditReloadSpec {
   }
 
   private String allowFor(String principal, Path... paths) {
-    StringBuilder yaml = new StringBuilder("version: 2\nusers:\n  " + principal + ":\n");
-    for (Path path : paths) {
-      yaml.append("    - '").append(path).append("'\n");
-    }
-    return yaml.toString();
+    return TestSupport.usersAcl(Map.of(principal, List.of(paths)));
   }
 
   private PolicyStore load(AclYamlLoader.Options options) throws Exception {
@@ -199,15 +196,10 @@ class AuditReloadSpec {
   }
 
   private String allowTwo(String p1, String p2, Path shared) {
-    return "version: 2\nusers:\n  "
-        + p1
-        + ":\n    - '"
-        + shared
-        + "'\n  "
-        + p2
-        + ":\n    - '"
-        + shared
-        + "'\n";
+    LinkedHashMap<String, List<Path>> rules = new LinkedHashMap<>();
+    rules.put(p1, List.of(shared));
+    rules.put(p2, List.of(shared));
+    return TestSupport.usersAcl(rules);
   }
 
   @Test

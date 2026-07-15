@@ -77,85 +77,75 @@ public record AclPolicy(
    * moves between principals while its file stays missing still appears as a remove plus an add.
    */
   public static List<RuleChange> diff(AclPolicy before, AclPolicy after) {
-    Set<RuleRef> beforeAll = before.allRuleRefs();
-    Set<RuleRef> afterAll = after.allRuleRefs();
-    Set<RuleRef> afterActive = after.activeRuleRefs();
+    Set<RuleRef> beforeActive = before.activeRuleRefs();
     Set<RuleRef> beforeUnresolved = before.unresolvedRefs();
+    Set<RuleRef> afterActive = after.activeRuleRefs();
+    Set<RuleRef> afterUnresolved = after.unresolvedRefs();
+    Set<RuleRef> beforeAll = union(beforeActive, beforeUnresolved);
+    Set<RuleRef> afterAll = union(afterActive, afterUnresolved);
 
     List<RuleChange> changes = new ArrayList<>();
     afterAll.stream()
         .filter(ref -> !beforeAll.contains(ref))
-        .sorted(RULE_REF_ORDER)
         .forEach(ref -> changes.add(change(ChangeKind.ADDED, ref)));
     beforeAll.stream()
         .filter(ref -> !afterAll.contains(ref))
-        .sorted(RULE_REF_ORDER)
         .forEach(ref -> changes.add(change(ChangeKind.REMOVED, ref)));
     // Resolved: this exact omitted rule is now active because its file appeared. Matched by rule
     // identity, not by path — if a different principal's rule for the same path was removed, that
     // is a removal, not a resolution of this one.
     before.unresolvedRules.stream()
-        .filter(rule -> afterActive.contains(ref(rule)))
-        .sorted(UNRESOLVED_ORDER)
-        .forEach(rule -> changes.add(change(ChangeKind.RESOLVED, rule)));
+        .map(AclPolicy::ref)
+        .filter(afterActive::contains)
+        .forEach(ref -> changes.add(change(ChangeKind.RESOLVED, ref)));
     // Pending: this exact rule is omitted now and was not omitted before (again by identity).
     after.unresolvedRules.stream()
-        .filter(rule -> !beforeUnresolved.contains(ref(rule)))
-        .sorted(UNRESOLVED_ORDER)
-        .forEach(rule -> changes.add(change(ChangeKind.PENDING, rule)));
+        .map(AclPolicy::ref)
+        .filter(ref -> !beforeUnresolved.contains(ref))
+        .forEach(ref -> changes.add(change(ChangeKind.PENDING, ref)));
+    changes.sort(CHANGE_ORDER);
     return changes;
   }
 
-  private static final Comparator<RuleRef> RULE_REF_ORDER =
-      Comparator.comparing(RuleRef::type)
-          .thenComparing(RuleRef::principal)
-          .thenComparing(RuleRef::pattern);
+  // Grouped by kind (in ChangeKind declaration order), then by identity, for a stable audit order.
+  private static final Comparator<RuleChange> CHANGE_ORDER =
+      Comparator.comparingInt((RuleChange change) -> change.kind().ordinal())
+          .thenComparing(RuleChange::type)
+          .thenComparing(RuleChange::principal)
+          .thenComparing(RuleChange::pattern);
 
-  private static final Comparator<UnresolvedRule> UNRESOLVED_ORDER =
-      Comparator.comparing(UnresolvedRule::type)
-          .thenComparing(UnresolvedRule::principal)
-          .thenComparing(UnresolvedRule::pattern);
+  private static Set<RuleRef> union(Set<RuleRef> a, Set<RuleRef> b) {
+    Set<RuleRef> combined = new LinkedHashSet<>(a);
+    combined.addAll(b);
+    return combined;
+  }
 
   private static RuleChange change(ChangeKind kind, RuleRef ref) {
     return new RuleChange(kind, ref.type(), ref.principal(), ref.pattern());
-  }
-
-  private static RuleChange change(ChangeKind kind, UnresolvedRule rule) {
-    return new RuleChange(kind, rule.type(), rule.principal(), rule.pattern());
   }
 
   private static RuleRef ref(UnresolvedRule rule) {
     return new RuleRef(rule.type(), rule.principal(), rule.pattern());
   }
 
-  private Set<RuleRef> allRuleRefs() {
-    Set<RuleRef> refs = activeRuleRefs();
-    refs.addAll(unresolvedRefs());
+  private Set<RuleRef> activeRuleRefs() {
+    Set<RuleRef> refs = new LinkedHashSet<>();
+    addRefs(userRules, "user", refs);
+    addRefs(groupRules, "group", refs);
     return refs;
   }
 
-  private Set<RuleRef> activeRuleRefs() {
-    Set<RuleRef> refs = new LinkedHashSet<>();
-    userRules.forEach(
-        (principal, rules) ->
-            rules.forEach(rule -> refs.add(new RuleRef("user", principal, rule.patternText()))));
-    groupRules.forEach(
-        (principal, rules) ->
-            rules.forEach(rule -> refs.add(new RuleRef("group", principal, rule.patternText()))));
-    return refs;
+  private static void addRefs(
+      Map<String, List<CompiledRule>> rules, String type, Set<RuleRef> out) {
+    rules.forEach(
+        (principal, principalRules) ->
+            principalRules.forEach(
+                rule -> out.add(new RuleRef(type, principal, rule.patternText()))));
   }
 
   private Set<RuleRef> unresolvedRefs() {
     Set<RuleRef> refs = new LinkedHashSet<>();
     unresolvedRules.forEach(rule -> refs.add(ref(rule)));
     return refs;
-  }
-
-  /**
-   * The single definition of how an exact pattern is keyed for missing-file tracking, used by the
-   * loader to populate {@link #unresolvedRules()} and by {@link PolicyStore} to re-resolve them.
-   */
-  static Path unresolvedKey(String pattern) {
-    return Path.of(pattern).normalize();
   }
 }

@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -39,6 +40,17 @@ final class TestSupport {
   static void writeAcl(Path file, String yaml) throws IOException {
     Files.writeString(file, yaml);
     Files.setPosixFilePermissions(file, OWNER_ONLY);
+  }
+
+  /** A version-2 ACL document granting each principal (in insertion order) its listed paths. */
+  static String usersAcl(Map<String, List<Path>> rules) {
+    StringBuilder yaml = new StringBuilder("version: 2\nusers:\n");
+    rules.forEach(
+        (principal, paths) -> {
+          yaml.append("  ").append(principal).append(":\n");
+          paths.forEach(path -> yaml.append("    - '").append(path).append("'\n"));
+        });
+    return yaml.toString();
   }
 
   /**
