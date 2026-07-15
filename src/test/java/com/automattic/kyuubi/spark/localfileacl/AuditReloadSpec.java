@@ -258,9 +258,9 @@ class AuditReloadSpec {
   }
 
   @Test
-  void detailRecordsPrecedeTheSummaryAndShareItsDigest() throws Exception {
-    // Finding 2: the summary is a completion marker, emitted after its detail records, which repeat
-    // its new_digest for association.
+  void detailRecordsPrecedeTheSummaryAndShareAReloadId() throws Exception {
+    // Finding 2: the summary is a completion marker, emitted after its detail records, which carry
+    // the same fresh reload_id for association (the digest alone is not unique across reparses).
     TestSupport.writeAcl(aclFile, allow(fileA));
     PolicyStore store = load(strict());
     TestSupport.writeAcl(aclFile, allow(fileB));
@@ -271,8 +271,36 @@ class AuditReloadSpec {
     Map<String, String> summary = TestSupport.parseLogfmt(last.getMessage().getFormattedMessage());
     assertTrue(last.getMessage().getFormattedMessage().startsWith(SUMMARY_PREFIX));
     assertEquals("changed", summary.get("outcome"));
+    assertFalse(summary.get("reload_id").isEmpty());
     Map<String, String> added = change("added", fileB.toString()).orElseThrow();
-    assertEquals(summary.get("new_digest"), added.get("new_digest"));
+    assertEquals(summary.get("reload_id"), added.get("reload_id"));
+  }
+
+  @Test
+  void successiveResolutionsWithTheSameDigestGetDistinctReloadIds() throws Exception {
+    // Two missing files resolve on successive intervals without any YAML edit, so both changed
+    // events carry the same digest; the reload_id is what distinguishes the two batches.
+    Path first = root.resolve("first.conf");
+    Path second = root.resolve("second.conf");
+    TestSupport.writeAcl(aclFile, allow(fileA, first, second));
+    PolicyStore store = load(lenient());
+    String loadDigest = lastSummary().get("new_digest");
+
+    Files.writeString(first, "x");
+    tick();
+    store.maybeReload();
+    Map<String, String> firstChange = lastSummary();
+
+    Files.writeString(second, "x");
+    tick();
+    store.maybeReload();
+    Map<String, String> secondChange = lastSummary();
+
+    // Same content throughout, so the digest never moves...
+    assertEquals(loadDigest, firstChange.get("new_digest"));
+    assertEquals(loadDigest, secondChange.get("new_digest"));
+    // ...but each reload batch is uniquely identified.
+    assertFalse(firstChange.get("reload_id").equals(secondChange.get("reload_id")));
   }
 
   @Test

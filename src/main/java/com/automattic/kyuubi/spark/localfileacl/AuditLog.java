@@ -2,6 +2,7 @@ package com.automattic.kyuubi.spark.localfileacl;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,11 +79,12 @@ final class AuditLog {
    * never confused with a delimiter.
    *
    * <p>The detail records are emitted first and the summary last, so the summary is a completion
-   * marker: a consumer that sees {@code added=3} for a given {@code new_digest} is guaranteed the
+   * marker: a consumer that sees {@code added=3} for a given {@code reload_id} is guaranteed the
    * three matching detail records preceded it. If emission fails partway (a logging backend fault,
    * which the caller isolates) the reader is left with orphan details and no summary — never a
-   * summary that overcounts the details. Details repeat {@code new_digest} so they associate with
-   * their summary even when reloads interleave in the log.
+   * summary that overcounts the details. Every record of one reload carries the same fresh {@code
+   * reload_id}, so details associate with their summary even when same-content reparses or
+   * concurrent stores emit records with the same digest and they interleave in the log.
    */
   static void reload(
       ReloadOutcome outcome,
@@ -92,9 +94,11 @@ final class AuditLog {
       AclPolicy policy,
       List<AclPolicy.RuleChange> changes,
       String error) {
+    String reloadId = UUID.randomUUID().toString();
     for (AclPolicy.RuleChange change : changes) {
       StringBuilder detail = new StringBuilder(120);
       detail.append("event=local_file_acl_reload_change");
+      append(detail, "reload_id", reloadId);
       append(detail, "outcome", outcome.wire());
       append(detail, "new_digest", newDigest);
       append(detail, "change", change.kind().name().toLowerCase(Locale.ROOT));
@@ -106,6 +110,7 @@ final class AuditLog {
 
     StringBuilder summary = new StringBuilder(200);
     summary.append("event=local_file_acl_reload");
+    append(summary, "reload_id", reloadId);
     append(summary, "outcome", outcome.wire());
     append(summary, "source", source);
     append(summary, "old_digest", oldDigest);

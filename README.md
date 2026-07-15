@@ -208,13 +208,13 @@ event=local_file_acl decision=DENY user="mallory" key="spark.files" resource="/e
 
 The same category also carries **policy lifecycle events**, so an operator can see when the ACL was
 loaded or changed alongside the decisions it drove. Each reload that changes the published policy
-emits one `event=local_file_acl_reload` summary, followed by one
-`event=local_file_acl_reload_change` record per changed rule:
+emits one `event=local_file_acl_reload_change` record per changed rule, followed by one
+`event=local_file_acl_reload` summary:
 
 ```text
-event=local_file_acl_reload_change outcome="changed" new_digest="c3d4…" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
-event=local_file_acl_reload_change outcome="changed" new_digest="c3d4…" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
-event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added=1 removed=0 resolved=1 pending=0 error=""
+event=local_file_acl_reload_change reload_id="6f1c…" outcome="changed" new_digest="c3d4…" change="added" type="user" principal="alice" pattern="/opt/kyuubi/resources/alice/new.conf"
+event=local_file_acl_reload_change reload_id="6f1c…" outcome="changed" new_digest="c3d4…" change="resolved" type="group" principal="tls" pattern="/opt/kyuubi/certificates/prod.pem"
+event=local_file_acl_reload reload_id="6f1c…" outcome="changed" source="/etc/kyuubi/kyuubi-local-file-acl.yaml" old_digest="a1b2…" new_digest="c3d4…" users=3 groups=2 rules=12 unresolved=0 added=1 removed=0 resolved=1 pending=0 error=""
 ```
 
 - `outcome` is `loaded` (initial load), `changed` (a running policy was replaced), `recovered` (a
@@ -224,10 +224,11 @@ event=local_file_acl_reload outcome="changed" source="/etc/kyuubi/kyuubi-local-f
   resolvable) emits nothing, and while the policy stays invalid the event is not repeated every
   interval.
 - The detail records are emitted first and the summary last, so the summary is a completion marker:
-  a summary with `added=1` for a given `new_digest` is preceded by its one matching detail record.
+  a summary with `added=1` for a given `reload_id` is preceded by its one matching detail record.
   A logging fault partway through leaves detail records with no summary — never a summary that
-  overcounts details. The detail records repeat `new_digest` so they associate with their summary
-  even when reloads interleave.
+  overcounts details. Every record of one reload shares a fresh `reload_id`, which is what
+  associates details with their summary; the digest is not sufficient, since same-content reparses
+  (a missing file resolving) and concurrent stores can emit different batches under one digest.
 - The summary carries the new policy's counts (`users`, `groups`, `rules`, `unresolved` — counted
   per rule, so two principals sharing one missing path count as two) and the number of changes of
   each kind (`added`, `removed`, `resolved`, `pending`). Only a `changed` reload has non-zero change
