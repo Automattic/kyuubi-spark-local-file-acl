@@ -75,6 +75,8 @@ public final class PolicyStore {
   private void reloadNow() {
     long startNanos = System.nanoTime();
     AclState previous = state;
+    AclPolicy activated;
+    String activatedDigest;
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
@@ -86,6 +88,8 @@ public final class PolicyStore {
       }
       AclPolicy policy = loader.parse(content);
       state = new AclState.Valid(policy, digest);
+      activated = policy;
+      activatedDigest = digest;
       LOG.info(
           "Activated ACL policy from {}: {} users, {} groups, {} rules, {} unresolved, "
               + "digest {}, {} ms",
@@ -96,7 +100,6 @@ public final class PolicyStore {
           policy.unresolvedPaths().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
-      auditReload(previous, policy, digest, null);
     } catch (Exception e) {
       state = new AclState.Invalid(e.getMessage());
       LOG.warn(
@@ -105,13 +108,17 @@ public final class PolicyStore {
           aclFile,
           e);
       auditReload(previous, null, null, e.getMessage());
+      return;
     }
+    // Post-commit, and outside the load try/catch on purpose: nothing here — not even the audit
+    // helper's own failure-reporting log — may fall into that catch and undo the published policy.
+    auditReload(previous, activated, activatedDigest, null);
   }
 
   /**
    * Emits the lifecycle event for the transition just applied. A null {@code policy} means the
-   * reload failed. Audit emission has its own failure boundary — {@code AuditLog.reload} is post-
-   * commit, so a logging fault must not undo the published state or fail the triggering request.
+   * reload failed. {@code AuditLog.reload} is post-commit, so a logging fault must not undo the
+   * published state or fail the triggering request.
    */
   private void auditReload(AclState previous, AclPolicy policy, String newDigest, String error) {
     boolean success = policy != null;
