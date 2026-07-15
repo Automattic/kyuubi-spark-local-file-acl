@@ -45,6 +45,45 @@ final class AuditLog {
     AUDIT.warn(record("DENY", user, key, resource, reason, "", "", ""));
   }
 
+  /**
+   * A policy lifecycle event on reload: {@code outcome} is {@code loaded} (initial load), {@code
+   * changed} (a running policy was replaced), {@code recovered} (a valid policy replaced an invalid
+   * one), or {@code invalidated} (a running policy became invalid). Multi-valued fields hold
+   * comma-joined identities; only {@code invalidated} logs at WARN, since it revokes access.
+   */
+  static void reload(
+      String outcome,
+      String source,
+      String oldDigest,
+      String newDigest,
+      int users,
+      int groups,
+      int rules,
+      int unresolved,
+      AclPolicy.ReloadDiff diff,
+      String error) {
+    StringBuilder line = new StringBuilder(200);
+    line.append("event=local_file_acl_reload");
+    append(line, "outcome", outcome);
+    append(line, "source", source);
+    append(line, "old_digest", oldDigest);
+    append(line, "new_digest", newDigest);
+    appendInt(line, "users", users);
+    appendInt(line, "groups", groups);
+    appendInt(line, "rules", rules);
+    appendInt(line, "unresolved", unresolved);
+    append(line, "added", String.join(",", diff.addedRules()));
+    append(line, "removed", String.join(",", diff.removedRules()));
+    append(line, "resolved", String.join(",", diff.resolvedPaths()));
+    append(line, "pending", String.join(",", diff.pendingPaths()));
+    append(line, "error", error);
+    if ("invalidated".equals(outcome)) {
+      AUDIT.warn(line.toString());
+    } else {
+      AUDIT.info(line.toString());
+    }
+  }
+
   private static String record(
       String decision,
       String user,
@@ -64,6 +103,10 @@ final class AuditLog {
     append(line, "principal", principal);
     append(line, "pattern", pattern);
     return line.toString();
+  }
+
+  private static void appendInt(StringBuilder line, String field, int value) {
+    line.append(' ').append(field).append('=').append(value);
   }
 
   private static void append(StringBuilder line, String field, String value) {

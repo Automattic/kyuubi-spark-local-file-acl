@@ -74,10 +74,11 @@ public final class PolicyStore {
 
   private void reloadNow() {
     long startNanos = System.nanoTime();
+    AclState previous = state;
     try {
       byte[] content = loader.readVerified(aclFile);
       String digest = sha256(content);
-      if (state instanceof AclState.Valid valid
+      if (previous instanceof AclState.Valid valid
           && digest.equals(valid.digest())
           && !anyUnresolvedPathResolvable(valid.policy())) {
         LOG.debug("ACL digest unchanged ({}); skipping reparse", digest);
@@ -95,13 +96,67 @@ public final class PolicyStore {
           policy.unresolvedPaths().size(),
           digest,
           (System.nanoTime() - startNanos) / 1_000_000);
+      auditActivation(previous, policy, digest);
     } catch (Exception e) {
+      // Suppress a repeated event while the policy stays invalid: only the transition into an
+      // invalid state revokes access, and the WARN above already fires every interval.
+      boolean wasValidOrStartup = !(previous instanceof AclState.Invalid);
       state = new AclState.Invalid(e.getMessage());
       LOG.warn(
           "ACL policy at {} is invalid; local resources will be rejected until a valid "
               + "policy is installed",
           aclFile,
           e);
+      if (wasValidOrStartup) {
+        String oldDigest = previous instanceof AclState.Valid valid ? valid.digest() : null;
+        AuditLog.reload(
+            "invalidated",
+            aclFile.toString(),
+            oldDigest,
+            null,
+            0,
+            0,
+            0,
+            0,
+            AclPolicy.ReloadDiff.EMPTY,
+            e.getMessage());
+      }
+    }
+  }
+
+  private void auditActivation(AclState previous, AclPolicy policy, String digest) {
+    String source = aclFile.toString();
+    int users = policy.userRules().size();
+    int groups = policy.groupRules().size();
+    int rules = policy.ruleCount();
+    int unresolved = policy.unresolvedPaths().size();
+    if (previous instanceof AclState.Valid valid) {
+      AuditLog.reload(
+          "changed",
+          source,
+          valid.digest(),
+          digest,
+          users,
+          groups,
+          rules,
+          unresolved,
+          AclPolicy.diff(valid.policy(), policy),
+          null);
+    } else {
+      // Initial load (previous == null) versus recovery from an invalid state. Neither has a prior
+      // policy to diff against, so the counts and outcome carry the whole story.
+      String outcome = previous instanceof AclState.Invalid ? "recovered" : "loaded";
+      AuditLog.reload(
+          outcome,
+          source,
+          null,
+          digest,
+          users,
+          groups,
+          rules,
+          unresolved,
+          AclPolicy.ReloadDiff.EMPTY,
+          null);
     }
   }
 
