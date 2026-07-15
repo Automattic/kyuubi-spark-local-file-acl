@@ -44,8 +44,8 @@ final class TestSupport {
 
   /**
    * A version-2 ACL document granting each principal in {@code rules} its listed paths. Principals
-   * are emitted in the map's iteration order; pass a {@link java.util.LinkedHashMap} when that order
-   * matters (it does not affect parsing).
+   * are emitted in the map's iteration order; pass a {@link java.util.LinkedHashMap} when that
+   * order matters (it does not affect parsing).
    */
   static String usersAcl(Map<String, List<Path>> rules) {
     StringBuilder yaml = new StringBuilder("version: 2\nusers:\n");
